@@ -2,5 +2,6 @@
 !.streamlit/.keep
 .venv/
 .idea
+.claude
 
 __pycache__/
