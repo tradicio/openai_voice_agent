@@ -1,7 +1,12 @@
+import os
+
 import yaml
 
 
-def load_prompts(path: str = 'prompts.yaml') -> dict[str, dict[str, str]]:
+_DEFAULT_PROMPTS_PATH = os.path.join(os.path.dirname(__file__), 'prompts.yaml')
+
+
+def load_prompts(path: str = _DEFAULT_PROMPTS_PATH) -> dict[str, dict[str, str]]:
     """Load named assistant prompts from a YAML file
 
     Args:
