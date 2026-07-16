@@ -52,11 +52,7 @@ def main():
     webrtc_ctx = webrtc_streamer(
         key = f"recoder",
         mode = WebRtcMode.SENDRECV,
-        rtc_configuration = dict(
-            iceServers = [
-                dict(urls = ['stun:stun.l.google.com:19302'])
-            ]
-        ),
+        rtc_configuration = dict(iceServers = []),
         audio_frame_callback = api_wrapper.audio_frame_callback,
         media_stream_constraints = dict(video = False, audio = True),
         desired_playing_state = st.session_state.recording,
