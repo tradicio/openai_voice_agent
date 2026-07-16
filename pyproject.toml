@@ -11,4 +11,5 @@ dependencies = [
     "websockets~=14.1",
     "numpy~=2.1",
     "av~=12.3",
+    "pyyaml~=6.0",
 ]

@@ -1,5 +1,6 @@
 import av
 import numpy as np
+import yaml
 
 
 def hash_by_code(obj) -> int:
@@ -7,6 +8,19 @@ def hash_by_code(obj) -> int:
     """
     import inspect
     return hash(inspect.getsource(obj))
+
+
+def load_prompts(path: str = 'prompts.yaml') -> dict[str, dict[str, str]]:
+    """Load named assistant prompts from a YAML file
+
+    Args:
+        path (str): Path to the YAML file containing prompts
+    Returns:
+        dict[str, dict[str, str]]: Mapping of prompt key to
+            a dict with 'label' and 'instructions'
+    """
+    with open(path, encoding = 'utf-8') as f:
+        return yaml.safe_load(f)
 
 
 def audio_frame_to_pcm_audio(frame: av.AudioFrame) -> bytes:
