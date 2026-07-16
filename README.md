@@ -62,9 +62,5 @@ A single asyncio event loop runs four tasks concurrently inside one
 `asyncio.TaskGroup`: `send` (mic -> API), `receive` (API -> speaker/UI),
 `timer` (enforces the session timeout), and `status_checker` (watches the
 Streamlit "recording" flag so the UI's "End conversation" button can stop
-the call). Any of these raising `TerminateTaskGroup` cleanly tears down the
+the call). Any of these raising `TerminateTaskGroup` cleanlyS tears down the
 whole group and closes the WebSocket connection.
-
-## Article on Qiita (Japanese)
-
-- [OpenAI Realtime API ベースの音声チャットを Streamlit で実装する](https://qiita.com/akeyhero/items/fe5bdd02d9a1cd7782d7)
