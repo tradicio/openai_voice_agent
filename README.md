@@ -4,8 +4,17 @@
 
 ## Installation
 
+With [uv](https://docs.astral.sh/uv/):
+
 ```sh
 uv sync
+```
+
+Without uv, using a plain `venv` + `pip`:
+
+```sh
+source .venv/bin/activate  # on Windows: .venv\Scripts\activate
+pip install -e .
 ```
 
 ## Configuration
@@ -18,8 +27,16 @@ OPENAI_API_KEY = "sk-..."
 
 ## Run
 
+With uv:
+
 ```sh
 uv run streamlit run main.py
+```
+
+With the `venv` + `pip` setup (with the virtual environment activated):
+
+```sh
+streamlit run main.py
 ```
 
 ## How it works
