@@ -17,6 +17,7 @@ from utils import (
     load_prompts
 )
 from st_utils import get_logger, get_event_loop
+from tools import TOOL_DEFINITIONS, TOOL_HANDLERS, TOOL_INSTRUCTIONS
 
 
 logger = get_logger(__name__)
@@ -46,7 +47,7 @@ REALTIME_API_CONFIG = dict(
             voice = 'alloy',
         ),
     ),
-    tools = [],
+    tools = TOOL_DEFINITIONS,
     tool_choice = 'auto',
 )
 
@@ -82,6 +83,7 @@ class OpenAIRealtimeAPIWrapper:
     _session_timeout: int | float
     _send_interval: float
     _instructions: str
+    _ending: bool
     _recording: bool
     _messages: list[dict]
     _resampler_for_api: av.audio.resampler.AudioResampler
@@ -107,6 +109,7 @@ class OpenAIRealtimeAPIWrapper:
         self._session_timeout = session_timeout
         self._send_interval = send_interval
         self._instructions = instructions
+        self._ending = False
 
         self._recording = False
         self._messages = []
@@ -196,9 +199,10 @@ class OpenAIRealtimeAPIWrapper:
         Args:
             websocket (websockets.asyncio.client.ClientConnection): WebSocket client
         """
+        instructions = '\n\n'.join([self._instructions, *TOOL_INSTRUCTIONS])
         await websocket.send(json.dumps(dict(
             type = 'session.update',
-            session = dict(REALTIME_API_CONFIG, instructions = self._instructions),
+            session = dict(REALTIME_API_CONFIG, instructions = instructions),
         )))
 
     async def send(self, websocket: 'websockets.asyncio.client.ClientConnection'):
@@ -320,6 +324,25 @@ class OpenAIRealtimeAPIWrapper:
                         user_message = dict(role = 'user', content = None)
                         self._messages.append(user_message)
 
+                    elif response_data['type'] == 'response.function_call_arguments.done':
+                        logger.info('Event: %s - %s', response_data['type'], response_data)
+                        tool_handler = TOOL_HANDLERS.get(response_data.get('name'))
+                        if tool_handler:
+                            arguments = json.loads(response_data.get('arguments') or '{}')
+                            tool_handler(self, arguments)
+
+                    elif response_data['type'] == 'response.done':
+                        logger.debug('%s: %s', response_data['type'], response_data)
+                        if self._ending:
+                            remaining_seconds = self._play_stream.samples / CLIENT_SAMPLE_RATE
+                            logger.info(
+                                'Waiting %.2fs for the goodbye message to finish playing',
+                                remaining_seconds
+                            )
+                            await asyncio.sleep(remaining_seconds + 0.5)
+                            logger.info('Ending conversation as requested by the assistant')
+                            self.stop()
+
                     elif response_data['type'] == 'error':
                         logger.error('Event: %s - %s', response_data['type'], response_data)
                         st.error(response_data['error']['message'])
@@ -330,7 +353,6 @@ class OpenAIRealtimeAPIWrapper:
                             'session.created',
                             'session.updated',
                             'conversation.item.created',
-                            'response.done',
                             'response.output_audio.',
                             'rate_limits.updated',
                         )
@@ -393,6 +415,17 @@ class OpenAIRealtimeAPIWrapper:
         """
         self._instructions = instructions
 
+    def request_end_conversation(self):
+        """Mark the conversation to stop once the current response finishes playing
+
+        Called by the 'end_conversation' tool handler (see tools.py).
+        """
+        logger.info(
+            'Assistant requested to end the conversation; '
+            'will stop once the current response finishes playing'
+        )
+        self._ending = True
+
     def start(self):
         """Start operation
 
@@ -401,6 +434,7 @@ class OpenAIRealtimeAPIWrapper:
         if self.recording:
             raise RuntimeError('Already recording')
         self._recording = True
+        self._ending = False
         self._messages = []
         self.reset_stream()
 
