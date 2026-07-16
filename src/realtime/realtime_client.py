@@ -7,12 +7,12 @@ import av
 import streamlit as st
 import websockets
 
-from audio_utils import (
+from src.audio.audio_utils import (
     audio_frame_to_pcm_audio,
     pcm_audio_to_audio_frame,
     get_blank_audio_frame,
 )
-from config import (
+from src.realtime.config import (
     REALTIME_API_URL,
     REALTIME_API_HEADERS,
     REALTIME_API_CONFIG,
@@ -26,8 +26,8 @@ from config import (
     FORMAT_MAPPING,
     LAYOUT_MAPPING,
 )
-from st_utils import get_logger
-from tools import TOOL_HANDLERS, TOOL_INSTRUCTIONS
+from src.utils.st_utils import get_logger
+from src.realtime.tools import TOOL_HANDLERS, TOOL_INSTRUCTIONS
 
 
 logger = get_logger(__name__)

@@ -1,4 +1,4 @@
-from tools import TOOL_DEFINITIONS
+from src.realtime.tools import TOOL_DEFINITIONS
 
 
 # Configuration for calling Realtime API
