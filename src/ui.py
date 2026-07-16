@@ -1,9 +1,9 @@
 import streamlit as st
 from streamlit_webrtc import WebRtcMode, webrtc_streamer
 
-from prompts import load_prompts
-from realtime_client import OpenAIRealtimeAPIWrapper
-from st_utils import get_logger, get_event_loop, hash_by_code
+from src.prompts.prompts import load_prompts
+from src.realtime.realtime_client import OpenAIRealtimeAPIWrapper
+from src.utils.st_utils import get_logger, get_event_loop, hash_by_code
 
 
 logger = get_logger(__name__)

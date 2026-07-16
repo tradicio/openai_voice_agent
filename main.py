@@ -1,6 +1,6 @@
 import logging
 
-from ui import main
+from src.ui import main
 
 
 if __name__ == '__main__':
