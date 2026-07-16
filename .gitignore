@@ -2,5 +2,7 @@
 !.streamlit/.keep
 .venv/
 .idea
+.claude
 
 __pycache__/
+*.egg-info
