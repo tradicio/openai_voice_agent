@@ -62,7 +62,7 @@ def main():
         desired_playing_state = st.session_state.recording,
     )
 
-    if webrtc_ctx.state.playing:
+    if webrtc_ctx.state.playing and st.session_state.recording:
         if not api_wrapper.recording:
             st.write('Connecting to OpenAI.')
             logger.info('Starting running')
