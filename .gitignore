@@ -1,5 +1,6 @@
 .streamlit/*
 !.streamlit/.keep
 .venv/
+.idea
 
 __pycache__/
