@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.realtime.realtime_client import OpenAIRealtimeAPIWrapper
 from src.prompts.prompts import load_prompts
-from src.audio.audio_utils import pcm_audio_to_audio_frame, audio_frame_to_pcm_audio
+from src.audio.audio_utils import pcm_audio_to_audio_frame
 from src.realtime.config import (
     CLIENT_SAMPLE_RATE, CLIENT_SAMPLE_WIDTH, CLIENT_CHANNELS,
     FORMAT_MAPPING, LAYOUT_MAPPING
@@ -31,7 +31,6 @@ class AudioStreamSession:
         self.api_wrapper = OpenAIRealtimeAPIWrapper(api_key=api_key)
         self.recording = False
         self.api_task = None
-        self.stream_task = None
         self.session_timeout = 120
         self.prompt_key = list(load_prompts().keys())[0] if load_prompts() else "default"
         self.loop = asyncio.get_event_loop()
@@ -71,24 +70,6 @@ class AudioStreamSession:
                 )
             except Exception:
                 pass
-
-    async def _stream_audio_responses(self):
-        """Stream audio responses from OpenAI back to client"""
-        try:
-            while self.recording:
-                # Read audio from play stream
-                frame = self.api_wrapper._play_stream.read(4096, partial=True)
-                if frame:
-                    pcm_audio = audio_frame_to_pcm_audio(frame)
-                    base64_audio = base64.b64encode(pcm_audio).decode('utf-8')
-                    await self.websocket.send_text(
-                        json.dumps({"type": "audio", "data": base64_audio})
-                    )
-                    logger.debug(f"Sent {len(pcm_audio)} bytes of audio to client")
-                else:
-                    await asyncio.sleep(0.01)
-        except Exception as e:
-            logger.error(f"Error streaming audio responses: {e}")
 
     async def _handle_audio_frame(self, message: dict):
         """Process incoming audio frame"""
@@ -166,8 +147,6 @@ class AudioStreamSession:
 
             # Run the API connection in background task to allow message handler to continue
             self.api_task = asyncio.create_task(self.api_wrapper.run())
-            # Also stream audio responses back to client in background
-            self.stream_task = asyncio.create_task(self._stream_audio_responses())
         except Exception as e:
             logger.error(f"Conversation error: {e}")
             await self.websocket.send_text(
@@ -190,14 +169,6 @@ class AudioStreamSession:
             except asyncio.TimeoutError:
                 logger.warning("API task did not complete within timeout")
                 self.api_task.cancel()
-
-        # Wait for stream task to complete
-        if self.stream_task and not self.stream_task.done():
-            try:
-                await asyncio.wait_for(self.stream_task, timeout=2)
-            except asyncio.TimeoutError:
-                logger.warning("Stream task did not complete within timeout")
-                self.stream_task.cancel()
 
         await self.websocket.send_text(
             json.dumps({"type": "status", "message": "Conversation ended"})
