@@ -3,9 +3,15 @@ from pathlib import Path
 from typing import Dict, List
 
 import yaml
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Body
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+
+class TimeoutRequest(BaseModel):
+    """Request model for timeout updates"""
+    timeout: int
 
 router = APIRouter()
 
@@ -46,8 +52,9 @@ async def get_prompts() -> Dict:
 
 
 @router.post("/api/session/timeout")
-async def update_session_timeout(timeout: int = 300) -> Dict:
+async def update_session_timeout(request: TimeoutRequest) -> Dict:
     """Update session timeout (60-300 seconds)"""
+    timeout = request.timeout
     if timeout < 60 or timeout > 300:
         raise HTTPException(
             status_code=400,

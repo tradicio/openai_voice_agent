@@ -152,9 +152,9 @@ class OpenAIRealtimeAPIWrapper:
                     task_group.create_task(self.receive(websocket))
                     task_group.create_task(self.timer())
                     task_group.create_task(self.status_checker())
-            except* TerminateTaskGroup as eg:
-                logger.info('Connection closing: %s', eg.exceptions[0].reason)
-            except* Exception as eg:
+            except TerminateTaskGroup as eg:
+                logger.info('Connection closing: %s', eg.reason)
+            except BaseException as eg:
                 logger.error('Error in task group', exc_info = eg)
         logger.info('Connection closed')
 
