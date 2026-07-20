@@ -36,7 +36,7 @@ class AudioStreamSession:
         self.session_timeout = 120
         self.prompt_key = list(load_prompts().keys())[0] if load_prompts() else "default"
         self.loop = asyncio.get_event_loop()
-        self.last_messages_count = 0  # Track messages to detect new ones
+        self.last_transcript_lengths = {}  # message index -> chars already forwarded
 
     async def handle(self):
         """Main WebSocket message handler"""
@@ -75,24 +75,36 @@ class AudioStreamSession:
                 pass
 
     async def _monitor_messages(self):
-        """Monitor and forward new messages from API to client"""
+        """Monitor and forward transcript growth from API to client
+
+        Messages are mutated in place as transcript deltas stream in
+        (e.g. assistant content starts as '' and grows), so we track how
+        many characters of each message we've already forwarded by index
+        and only send the newly-added substring, instead of diffing on
+        message count (which would forward a message once, prematurely,
+        and never send its later growth).
+        """
         try:
             while self.recording:
-                messages = self.api_wrapper.valid_messages
-                if len(messages) > self.last_messages_count:
-                    # New messages received
-                    new_messages = messages[self.last_messages_count:]
-                    for msg in new_messages:
+                messages = self.api_wrapper._messages
+                for idx, msg in enumerate(messages):
+                    content = msg.get("content")
+                    if not content:
+                        continue
+                    prev_len = self.last_transcript_lengths.get(idx, 0)
+                    if len(content) > prev_len:
+                        delta = content[prev_len:]
                         await self.websocket.send_text(
                             json.dumps({
                                 "type": "transcript",
                                 "role": msg.get("role"),
-                                "delta": msg.get("content", "")
+                                "delta": delta,
+                                "index": idx,
                             })
                         )
-                        logger.debug(f"Forwarded {msg.get('role')} message to client")
-                    self.last_messages_count = len(messages)
-                await asyncio.sleep(0.5)
+                        self.last_transcript_lengths[idx] = len(content)
+                        logger.debug(f"Forwarded {msg.get('role')} transcript delta to client")
+                await asyncio.sleep(0.3)
         except Exception as e:
             logger.error(f"Error monitoring messages: {e}")
 
@@ -190,8 +202,8 @@ class AudioStreamSession:
             # Run the API connection in background task to allow message handler to continue
             self.api_task = asyncio.create_task(self.api_wrapper.run())
             # Monitor and forward messages from API to client
+            self.last_transcript_lengths = {}
             self.monitor_task = asyncio.create_task(self._monitor_messages())
-            self.last_messages_count = 0
             # Stream audio responses back to client
             self.stream_task = asyncio.create_task(self._stream_audio_responses())
         except Exception as e:

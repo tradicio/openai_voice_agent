@@ -9,7 +9,11 @@ export class AudioCaptureManager {
 
     try {
       this.mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
       });
 
       this.audioContext = new (window.AudioContext ||

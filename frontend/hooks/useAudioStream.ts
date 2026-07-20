@@ -8,6 +8,7 @@ import { createWebSocketURL, sendControlMessage, sendConfigMessage } from '@/lib
 interface Message {
   role: 'user' | 'assistant';
   text: string;
+  index: number;
 }
 
 // Must match backend CLIENT_CHANNELS (src/realtime/config.py)
@@ -102,10 +103,27 @@ export function useAudioStream(
         if (message.type === 'status') {
           setStatus(message.message);
         } else if (message.type === 'transcript') {
-          setMessages((prev) => [
-            ...prev,
-            { role: message.role, text: message.delta },
-          ]);
+          setMessages((prev) => {
+            const existing = prev.findIndex(
+              (m) => m.index === message.index,
+            );
+            if (existing === -1) {
+              return [
+                ...prev,
+                {
+                  role: message.role,
+                  text: message.delta,
+                  index: message.index,
+                },
+              ];
+            }
+            const updated = [...prev];
+            updated[existing] = {
+              ...updated[existing],
+              text: updated[existing].text + message.delta,
+            };
+            return updated;
+          });
         } else if (message.type === 'audio') {
           audioPlaybackRef.current?.playChunk(message.data);
         }
