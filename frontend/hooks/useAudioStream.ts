@@ -104,25 +104,42 @@ export function useAudioStream(
           setStatus(message.message);
         } else if (message.type === 'transcript') {
           setMessages((prev) => {
-            const existing = prev.findIndex(
+            // Same message (by index): append the delta to it directly.
+            const sameMessage = prev.findIndex(
               (m) => m.index === message.index,
             );
-            if (existing === -1) {
-              return [
-                ...prev,
-                {
-                  role: message.role,
-                  text: message.delta,
-                  index: message.index,
-                },
-              ];
+            if (sameMessage !== -1) {
+              const updated = [...prev];
+              updated[sameMessage] = {
+                ...updated[sameMessage],
+                text: updated[sameMessage].text + message.delta,
+              };
+              return updated;
             }
-            const updated = [...prev];
-            updated[existing] = {
-              ...updated[existing],
-              text: updated[existing].text + message.delta,
-            };
-            return updated;
+
+            // New message index, but same speaker as the last bubble
+            // (e.g. a response that got interrupted/restarted mid-reply):
+            // keep it as one continuous bubble instead of fragmenting the
+            // conversation into a new line per underlying message.
+            const last = prev[prev.length - 1];
+            if (last && last.role === message.role) {
+              const updated = [...prev];
+              updated[updated.length - 1] = {
+                ...last,
+                text: last.text + message.delta,
+                index: message.index,
+              };
+              return updated;
+            }
+
+            return [
+              ...prev,
+              {
+                role: message.role,
+                text: message.delta,
+                index: message.index,
+              },
+            ];
           });
         } else if (message.type === 'audio') {
           audioPlaybackRef.current?.playChunk(message.data);
