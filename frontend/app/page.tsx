@@ -1,17 +1,54 @@
+'use client';
+
+import { useState } from 'react';
+import PromptSelector from '@/components/PromptSelector';
+import TimeoutSlider from '@/components/TimeoutSlider';
+import ConversationButton from '@/components/ConversationButton';
+import TranscriptDisplay from '@/components/TranscriptDisplay';
+
+interface Message {
+  role: 'user' | 'assistant';
+  text: string;
+}
+
 export default function Home() {
+  const [isRecording, setIsRecording] = useState(false);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [selectedPrompt, setSelectedPrompt] = useState('');
+  const [timeout, setTimeout] = useState(120);
+
+  const handleStartConversation = () => {
+    setIsRecording(true);
+    setMessages([]);
+  };
+
+  const handleStopConversation = () => {
+    setIsRecording(false);
+  };
+
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold text-center text-gray-900">
-        OpenAI Realtime Voice Chat
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold text-gray-900 text-center">
+        Voice Chat
       </h1>
-      <p className="text-center text-gray-600">
-        Next.js frontend ready to connect to the backend API.
-      </p>
-      <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
-        <p className="text-sm text-blue-800">
-          API URL: {process.env.NEXT_PUBLIC_API_URL}
-        </p>
-      </div>
+
+      <PromptSelector
+        onSelect={setSelectedPrompt}
+        disabled={isRecording}
+      />
+
+      <TimeoutSlider
+        onchange={setTimeout}
+        disabled={isRecording}
+      />
+
+      <ConversationButton
+        isRecording={isRecording}
+        onStart={handleStartConversation}
+        onStop={handleStopConversation}
+      />
+
+      <TranscriptDisplay messages={messages} />
     </div>
   );
 }
