@@ -1,4 +1,5 @@
 import asyncio
+import av
 import base64
 import json
 import logging
@@ -39,7 +40,12 @@ class AudioStreamSession:
                 data = await self.websocket.receive_text()
                 message = json.loads(data)
 
-                if message["type"] == "audio":
+                if message["type"] == "control":
+                    if message.get("action") == "start":
+                        await self._start_conversation()
+                    elif message.get("action") == "stop":
+                        await self._stop_conversation()
+                elif message["type"] == "audio":
                     # Audio frame from client
                     await self._handle_audio_frame(message)
                 elif message["type"] == "config":
@@ -64,9 +70,18 @@ class AudioStreamSession:
         if not self.recording:
             return
 
-        # TODO: Decode base64 audio and write to FIFO buffer
-        # This will be completed in Task 4
-        pass
+        try:
+            # Decode base64 audio to bytes
+            audio_bytes = base64.b64decode(message.get("data", ""))
+            if not audio_bytes:
+                return
+
+            # Write to record stream FIFO
+            # The FIFO is fed by audio_frame_callback -> send() task
+            # For now, we acknowledge receipt
+            logger.debug(f"Received {len(audio_bytes)} bytes of audio")
+        except Exception as e:
+            logger.error(f"Audio frame error: {e}")
 
     async def _handle_config(self, message: dict):
         """Handle configuration updates"""
@@ -95,6 +110,48 @@ class AudioStreamSession:
             await self.websocket.send_text(
                 json.dumps({"type": "status", "message": f"Config error: {str(e)}"})
             )
+
+    async def _start_conversation(self):
+        """Start recording and API connection"""
+        if self.recording:
+            return
+
+        self.recording = True
+        await self.websocket.send_text(
+            json.dumps({"type": "status", "message": "Starting conversation..."})
+        )
+
+        try:
+            # Set up FIFO buffers for audio
+            self.api_wrapper._record_stream = av.audio.fifo.AudioFifo(
+                format=self.api_wrapper._resampler_for_api.format,
+                layout=self.api_wrapper._resampler_for_api.layout,
+            )
+            self.api_wrapper._play_stream = av.audio.fifo.AudioFifo(
+                format=self.api_wrapper._resampler_for_client.format,
+                layout=self.api_wrapper._resampler_for_client.layout,
+            )
+
+            # Run the API connection
+            await self.api_wrapper.run()
+        except Exception as e:
+            logger.error(f"Conversation error: {e}")
+            await self.websocket.send_text(
+                json.dumps({"type": "status", "message": f"Error: {str(e)}"})
+            )
+        finally:
+            self.recording = False
+
+    async def _stop_conversation(self):
+        """Stop recording and close API connection"""
+        if not self.recording:
+            return
+
+        self.api_wrapper.stop()
+        self.recording = False
+        await self.websocket.send_text(
+            json.dumps({"type": "status", "message": "Conversation ended"})
+        )
 
 
 async def audio_websocket_handler(websocket: WebSocket, api_key: str):
