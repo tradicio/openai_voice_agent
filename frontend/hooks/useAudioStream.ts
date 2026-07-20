@@ -1,13 +1,17 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { AudioCaptureManager } from '@/lib/audioCapture';
+import { AudioPlaybackManager } from '@/lib/audioPlayback';
 import { createWebSocketURL, sendControlMessage, sendConfigMessage } from '@/lib/api';
 
 interface Message {
   role: 'user' | 'assistant';
   text: string;
 }
+
+// Must match backend CLIENT_CHANNELS (src/realtime/config.py)
+const CLIENT_CHANNELS = 2;
 
 export function useAudioStream(
   isActive: boolean,
@@ -16,44 +20,27 @@ export function useAudioStream(
 ) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [status, setStatus] = useState('');
-  const [ws, setWs] = useState<WebSocket | null>(null);
-  const [audioCapture, setAudioCapture] = useState<AudioCaptureManager | null>(
-    null,
-  );
+  // Refs (not state) so the audio callback always sees the live instance
+  // instead of a stale closure captured before the WebSocket/state updated.
+  const wsRef = useRef<WebSocket | null>(null);
+  const audioCaptureRef = useRef<AudioCaptureManager | null>(null);
+  const audioPlaybackRef = useRef<AudioPlaybackManager | null>(null);
 
-  const handleAudioFrame = useCallback(
-    (data: Float32Array) => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        // Convert Float32 to Int16 PCM
-        const buffer = new ArrayBuffer(data.length * 2);
-        const view = new Int16Array(buffer);
-        for (let i = 0; i < data.length; i++) {
-          view[i] = Math.max(-1, Math.min(1, data[i])) * 0x7fff;
-        }
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
-        ws.send(
-          JSON.stringify({
-            type: 'audio',
-            data: base64,
-          }),
-        );
-      }
-    },
-    [ws],
-  );
-
-  // Initialize WebSocket and audio capture when active
   useEffect(() => {
     if (!isActive) {
       // Cleanup
-      if (ws) {
-        sendControlMessage(ws, 'stop');
-        ws.close();
-        setWs(null);
+      if (wsRef.current) {
+        sendControlMessage(wsRef.current, 'stop');
+        wsRef.current.close();
+        wsRef.current = null;
       }
-      if (audioCapture) {
-        audioCapture.stop();
-        setAudioCapture(null);
+      if (audioCaptureRef.current) {
+        audioCaptureRef.current.stop();
+        audioCaptureRef.current = null;
+      }
+      if (audioPlaybackRef.current) {
+        audioPlaybackRef.current.stop();
+        audioPlaybackRef.current = null;
       }
       return;
     }
@@ -61,10 +48,37 @@ export function useAudioStream(
     // Establish WebSocket connection
     const wsUrl = createWebSocketURL();
     const newWs = new WebSocket(wsUrl);
+    wsRef.current = newWs;
+
+    const playback = new AudioPlaybackManager();
+    audioPlaybackRef.current = playback;
+
+    const handleAudioFrame = (data: Float32Array) => {
+      if (newWs.readyState !== WebSocket.OPEN) return;
+
+      // Convert mono Float32 to interleaved stereo Int16 PCM
+      // (backend expects CLIENT_CHANNELS channels)
+      const buffer = new ArrayBuffer(data.length * 2 * CLIENT_CHANNELS);
+      const view = new Int16Array(buffer);
+      for (let i = 0; i < data.length; i++) {
+        const sample = Math.max(-1, Math.min(1, data[i])) * 0x7fff;
+        for (let ch = 0; ch < CLIENT_CHANNELS; ch++) {
+          view[i * CLIENT_CHANNELS + ch] = sample;
+        }
+      }
+      const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+      newWs.send(
+        JSON.stringify({
+          type: 'audio',
+          data: base64,
+        }),
+      );
+    };
 
     newWs.onopen = async () => {
       setStatus('Connected');
-      setWs(newWs);
+
+      playback.initialize();
 
       // Send initial config
       sendConfigMessage(newWs, {
@@ -75,7 +89,7 @@ export function useAudioStream(
       // Initialize audio capture
       const manager = new AudioCaptureManager();
       await manager.initialize(handleAudioFrame);
-      setAudioCapture(manager);
+      audioCaptureRef.current = manager;
 
       // Start conversation
       sendControlMessage(newWs, 'start');
@@ -92,6 +106,8 @@ export function useAudioStream(
             ...prev,
             { role: message.role, text: message.delta },
           ]);
+        } else if (message.type === 'audio') {
+          audioPlaybackRef.current?.playChunk(message.data);
         }
       } catch (err) {
         console.error('Failed to parse WebSocket message:', err);
@@ -111,9 +127,11 @@ export function useAudioStream(
       if (newWs.readyState === WebSocket.OPEN) {
         newWs.close();
       }
-      if (audioCapture) {
-        audioCapture.stop();
-      }
+      audioCaptureRef.current?.stop();
+      audioCaptureRef.current = null;
+      audioPlaybackRef.current?.stop();
+      audioPlaybackRef.current = null;
+      wsRef.current = null;
     };
   }, [isActive, promptKey, timeout]);
 
