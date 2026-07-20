@@ -31,9 +31,11 @@ class AudioStreamSession:
         self.api_wrapper = OpenAIRealtimeAPIWrapper(api_key=api_key)
         self.recording = False
         self.api_task = None
+        self.monitor_task = None
         self.session_timeout = 120
         self.prompt_key = list(load_prompts().keys())[0] if load_prompts() else "default"
         self.loop = asyncio.get_event_loop()
+        self.last_messages_count = 0  # Track messages to detect new ones
 
     async def handle(self):
         """Main WebSocket message handler"""
@@ -70,6 +72,28 @@ class AudioStreamSession:
                 )
             except Exception:
                 pass
+
+    async def _monitor_messages(self):
+        """Monitor and forward new messages from API to client"""
+        try:
+            while self.recording:
+                messages = self.api_wrapper.valid_messages
+                if len(messages) > self.last_messages_count:
+                    # New messages received
+                    new_messages = messages[self.last_messages_count:]
+                    for msg in new_messages:
+                        await self.websocket.send_text(
+                            json.dumps({
+                                "type": "transcript",
+                                "role": msg.get("role"),
+                                "delta": msg.get("content", "")
+                            })
+                        )
+                        logger.debug(f"Forwarded {msg.get('role')} message to client")
+                    self.last_messages_count = len(messages)
+                await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.error(f"Error monitoring messages: {e}")
 
     async def _handle_audio_frame(self, message: dict):
         """Process incoming audio frame"""
@@ -147,6 +171,9 @@ class AudioStreamSession:
 
             # Run the API connection in background task to allow message handler to continue
             self.api_task = asyncio.create_task(self.api_wrapper.run())
+            # Monitor and forward messages from API to client
+            self.monitor_task = asyncio.create_task(self._monitor_messages())
+            self.last_messages_count = 0
         except Exception as e:
             logger.error(f"Conversation error: {e}")
             await self.websocket.send_text(
@@ -161,6 +188,14 @@ class AudioStreamSession:
 
         self.api_wrapper.stop()
         self.recording = False
+
+        # Wait for monitor task to complete
+        if self.monitor_task and not self.monitor_task.done():
+            try:
+                await asyncio.wait_for(self.monitor_task, timeout=2)
+            except asyncio.TimeoutError:
+                logger.warning("Monitor task did not complete within timeout")
+                self.monitor_task.cancel()
 
         # Wait for API task to complete
         if self.api_task and not self.api_task.done():
