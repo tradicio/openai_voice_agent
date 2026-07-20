@@ -1,6 +1,7 @@
 .streamlit/*
 !.streamlit/.keep
 .venv/
+.env
 .idea
 .claude
 
