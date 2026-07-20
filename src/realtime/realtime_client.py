@@ -268,6 +268,14 @@ class OpenAIRealtimeAPIWrapper:
                             'Event: %s - cleared the play stream',
                             response_data['type']
                         )
+                        if message is not None:
+                            # An assistant response was still in progress: cancel it
+                            # server-side so no further transcript/audio deltas for it
+                            # arrive, and close out the local accumulator so the *next*
+                            # response starts a fresh message instead of appending onto
+                            # this (now-interrupted) one out of chronological order.
+                            await websocket.send(json.dumps(dict(type = 'response.cancel')))
+                            message = None
                         # Prepare container when user starts speaking to avoid overlap with AI transcript
                         user_message = dict(role = 'user', content = None)
                         self._messages.append(user_message)
@@ -281,6 +289,10 @@ class OpenAIRealtimeAPIWrapper:
 
                     elif response_data['type'] == 'response.done':
                         logger.debug('%s: %s', response_data['type'], response_data)
+                        # No more deltas will arrive for this response (completed or
+                        # cancelled/interrupted); the next response.output_audio_transcript.delta
+                        # must start a fresh message rather than append to a stale one.
+                        message = None
                         if self._ending:
                             remaining_seconds = self._play_stream.samples / CLIENT_SAMPLE_RATE
                             logger.info(
