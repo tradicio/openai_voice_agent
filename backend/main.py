@@ -55,7 +55,7 @@ logger.info(f"CORS configured for frontend URL: {frontend_url}")
 app.include_router(router)
 
 # WebSocket route
-app.add_websocket_route("/ws/audio", websocket_endpoint)
+app.add_api_websocket_route("/ws/audio", websocket_endpoint)
 
 logger.info("FastAPI app initialized with routes and WebSocket endpoint")
 
