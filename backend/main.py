@@ -10,7 +10,7 @@ from api.routes import router
 from api.websocket import websocket_endpoint
 
 # Load environment variables
-load_dotenv(".env.local", override=True)
+load_dotenv(".env", override=True)
 load_dotenv(".env.example")
 
 # Configure logging

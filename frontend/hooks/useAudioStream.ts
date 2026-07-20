@@ -115,7 +115,7 @@ export function useAudioStream(
         audioCapture.stop();
       }
     };
-  }, [isActive, promptKey, timeout, handleAudioFrame]);
+  }, [isActive, promptKey, timeout]);
 
   return { messages, status };
 }
