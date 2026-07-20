@@ -9,7 +9,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .env
-backend/.env
+.env
 backend/.env.local
 backend/__pycache__/
 backend/.pytest_cache/
