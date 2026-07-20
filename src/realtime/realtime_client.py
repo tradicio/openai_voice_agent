@@ -4,7 +4,6 @@ import asyncio
 import datetime
 
 import av
-import streamlit as st
 import websockets
 
 from src.audio.audio_utils import (
@@ -26,7 +25,7 @@ from src.realtime.config import (
     FORMAT_MAPPING,
     LAYOUT_MAPPING,
 )
-from src.utils.st_utils import get_logger
+from src.utils import get_logger
 from src.realtime.tools import TOOL_HANDLERS, TOOL_INSTRUCTIONS
 
 
@@ -152,9 +151,9 @@ class OpenAIRealtimeAPIWrapper:
                     task_group.create_task(self.receive(websocket))
                     task_group.create_task(self.timer())
                     task_group.create_task(self.status_checker())
-            except TerminateTaskGroup as eg:
-                logger.info('Connection closing: %s', eg.reason)
-            except BaseException as eg:
+            except* TerminateTaskGroup as eg:
+                logger.info('Connection closing: %s', eg.exceptions[0].reason)
+            except* Exception as eg:
                 logger.error('Error in task group', exc_info = eg)
         logger.info('Connection closed')
 
@@ -195,7 +194,6 @@ class OpenAIRealtimeAPIWrapper:
                 logger.debug('Sent audio to OpenAI (%d bytes)', len(pcm_audio))
             except Exception as e:
                 logger.error('Error in send loop', exc_info = e)
-                st.exception(e)
                 break
         raise TerminateTaskGroup('send')
 
@@ -205,9 +203,7 @@ class OpenAIRealtimeAPIWrapper:
         Args:
             websocket (websockets.asyncio.client.ClientConnection): WebSocket client
         """
-        transcript_placeholder = None
         message = None
-        user_transcript_placeholder = None
         user_message = None
         while True:
             try:
@@ -239,15 +235,9 @@ class OpenAIRealtimeAPIWrapper:
                     elif response_data['type'] == 'response.output_audio_transcript.delta':
                         # logger.debug('Event: %s', response_data['type'])  # Skipped as it occurs too frequently
                         if not message:
-                            transcript_placeholder = st.empty()
                             message = dict(role = 'assistant', content = '')
                             self._messages.append(message)
                         message['content'] += response_data['delta']
-                        if not transcript_placeholder:
-                            transcript_placeholder = st.empty()
-                        with transcript_placeholder.container():
-                            with st.chat_message('assistant'):
-                                st.write(message['content'])
 
                     elif response_data['type'] == 'response.output_audio_transcript.done':
                         logger.info(
@@ -256,7 +246,6 @@ class OpenAIRealtimeAPIWrapper:
                             response_data['transcript']
                         )
                         message = None
-                        transcript_placeholder = None
 
                     elif response_data['type'] == 'conversation.item.input_audio_transcription.completed':
                         logger.debug(
@@ -271,11 +260,6 @@ class OpenAIRealtimeAPIWrapper:
                             user_message['content'] = response_data['transcript']
                         else:
                             user_message['content'] += response_data['transcript']
-                        if not user_transcript_placeholder:
-                            user_transcript_placeholder = st.empty()
-                        with user_transcript_placeholder.container():
-                            with st.chat_message('user'):
-                                st.write(user_message['content'])
 
                     elif response_data['type'] == 'input_audio_buffer.speech_started':
                         # Reset existing AI voice audio when user speech is detected
@@ -285,7 +269,6 @@ class OpenAIRealtimeAPIWrapper:
                             response_data['type']
                         )
                         # Prepare container when user starts speaking to avoid overlap with AI transcript
-                        user_transcript_placeholder = st.empty()
                         user_message = dict(role = 'user', content = None)
                         self._messages.append(user_message)
 
@@ -310,7 +293,6 @@ class OpenAIRealtimeAPIWrapper:
 
                     elif response_data['type'] == 'error':
                         logger.error('Event: %s - %s', response_data['type'], response_data)
-                        st.error(response_data['error']['message'])
 
                     elif any(
                         response_data['type'].startswith(pattern)
@@ -331,7 +313,6 @@ class OpenAIRealtimeAPIWrapper:
                     logger.debug('No response')
             except Exception as e:
                 logger.error('Error in receive loop', exc_info = e)
-                st.exception(e)
                 break
         raise TerminateTaskGroup('receive')
 
@@ -352,11 +333,8 @@ class OpenAIRealtimeAPIWrapper:
         raise TerminateTaskGroup('status_checker')
 
     def write_messages(self):
-        """Display chat messages
-        """
-        for message in self.valid_messages:
-            with st.chat_message(message['role']):
-                st.write(message['content'])
+        """Removed—messages now returned via API/WebSocket"""
+        pass
 
     @property
     def recording(self) -> bool:
@@ -412,5 +390,15 @@ class OpenAIRealtimeAPIWrapper:
         """Reset audio data stream
         """
         if not play_stream_only:
-            self._record_stream = av.audio.fifo.AudioFifo()
-        self._play_stream = av.audio.fifo.AudioFifo()
+            # Only create new FIFO if not already initialized with format/layout
+            if not hasattr(self, '_record_stream') or self._record_stream is None:
+                self._record_stream = av.audio.fifo.AudioFifo(
+                    format = FORMAT_MAPPING[API_SAMPLE_WIDTH],
+                    layout = LAYOUT_MAPPING[API_CHANNELS],
+                )
+        # Only create new FIFO if not already initialized with format/layout
+        if not hasattr(self, '_play_stream') or self._play_stream is None:
+            self._play_stream = av.audio.fifo.AudioFifo(
+                format = FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
+                layout = LAYOUT_MAPPING[CLIENT_CHANNELS],
+            )

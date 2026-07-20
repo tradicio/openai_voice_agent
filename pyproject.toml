@@ -1,15 +1,23 @@
 [project]
-name = "openai-realtime-voice-chat-on-streamlit"
+name = "openai-realtime-voice-chat"
 version = "0.1.0"
-description = "This application enables real-time voice chat using Streamlit and OpenAI's Realtime API, featuring streamlit-webrtc for audio streaming without relying on the server's microphone."
+description = "Real-time voice chat using Next.js frontend and FastAPI backend with OpenAI's Realtime API"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "streamlit-webrtc~=0.47",
-    "streamlit~=1.38.0", # streamlit_webrtc (0.47.9) doesn't work with 1.39.0 for some reason
-    "openai~=1.55",
-    "websockets~=14.1",
-    "numpy~=2.1",
-    "av~=12.3",
+    "fastapi~=0.139.0",
+    "uvicorn[standard]~=0.50.0",
+    "websockets~=16.0",
+    "openai~=2.44.0",
+    "numpy~=2.5.0",
+    "av~=17.0.0",
     "pyyaml~=6.0",
+    "python-dotenv~=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest~=7.4",
+    "pytest-asyncio~=0.21",
+    "httpx~=0.24",
 ]
