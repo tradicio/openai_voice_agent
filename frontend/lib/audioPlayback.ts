@@ -4,10 +4,25 @@ const CHANNELS = 2;
 export class AudioPlaybackManager {
   private audioContext: AudioContext | null = null;
   private nextPlayTime = 0;
+  private activeSources: AudioBufferSourceNode[] = [];
 
   initialize() {
     this.audioContext = new (window.AudioContext ||
       (window as any).webkitAudioContext)();
+    this.nextPlayTime = this.audioContext.currentTime;
+  }
+
+  /** Stop any audio already scheduled/playing (e.g. the user just barged in). */
+  clear() {
+    if (!this.audioContext) return;
+    for (const source of this.activeSources) {
+      try {
+        source.stop();
+      } catch {
+        // Already stopped/ended - ignore.
+      }
+    }
+    this.activeSources = [];
     this.nextPlayTime = this.audioContext.currentTime;
   }
 
@@ -42,6 +57,10 @@ export class AudioPlaybackManager {
     const source = this.audioContext.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(this.audioContext.destination);
+    source.onended = () => {
+      this.activeSources = this.activeSources.filter((s) => s !== source);
+    };
+    this.activeSources.push(source);
 
     const now = this.audioContext.currentTime;
     if (this.nextPlayTime < now) {
@@ -56,6 +75,7 @@ export class AudioPlaybackManager {
       this.audioContext.close();
       this.audioContext = null;
     }
+    this.activeSources = [];
     this.nextPlayTime = 0;
   }
 }

@@ -112,6 +112,13 @@ class AudioStreamSession:
         """Stream audio responses from OpenAI back to client"""
         try:
             while self.recording:
+                if self.api_wrapper.consume_barge_in():
+                    # The user just interrupted the assistant: audio already sent
+                    # to the client is likely still scheduled for playback there,
+                    # so tell it to stop immediately instead of waiting it out.
+                    await self.websocket.send_text(
+                        json.dumps({"type": "clear_audio"})
+                    )
                 frame = self.api_wrapper._play_stream.read(4096, partial=True)
                 if frame:
                     pcm_audio = audio_frame_to_pcm_audio(frame)

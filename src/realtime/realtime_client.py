@@ -77,6 +77,9 @@ class OpenAIRealtimeAPIWrapper:
 
         self._recording = False
         self._messages = []
+        self._current_response_id = None
+        self._cancelled_response_id = None
+        self._barge_in_event = asyncio.Event()
         self._resampler_for_api = av.audio.resampler.AudioResampler(
             format = FORMAT_MAPPING[API_SAMPLE_WIDTH],
             layout = LAYOUT_MAPPING[API_CHANNELS],
@@ -212,9 +215,14 @@ class OpenAIRealtimeAPIWrapper:
                     response_data = json.loads(response)
 
                     if response_data['type'] == 'response.output_audio.delta':
+                        # Drop leftover audio for a response we already cancelled;
+                        # it's still in flight from before the server honored our
+                        # cancel and must not be queued for playback.
+                        if self._cancelled_response_id is not None and \
+                                response_data.get('response_id') == self._cancelled_response_id:
+                            pass
                         # Queue audio data from server
-                        base64_audio = response_data['delta']
-                        if base64_audio:
+                        elif (base64_audio := response_data['delta']):
                             pcm_audio = base64.b64decode(base64_audio)
                             frame = pcm_audio_to_audio_frame(
                                 pcm_audio,
@@ -234,10 +242,17 @@ class OpenAIRealtimeAPIWrapper:
 
                     elif response_data['type'] == 'response.output_audio_transcript.delta':
                         # logger.debug('Event: %s', response_data['type'])  # Skipped as it occurs too frequently
-                        if not message:
-                            message = dict(role = 'assistant', content = '')
-                            self._messages.append(message)
-                        message['content'] += response_data['delta']
+                        # Drop leftover transcript for a response we already
+                        # cancelled (see input_audio_buffer.speech_started below):
+                        # it would otherwise start a brand new message *after* the
+                        # user's interrupting turn, reversing the visible order.
+                        if self._cancelled_response_id is None or \
+                                response_data.get('response_id') != self._cancelled_response_id:
+                            self._current_response_id = response_data.get('response_id')
+                            if not message:
+                                message = dict(role = 'assistant', content = '')
+                                self._messages.append(message)
+                            message['content'] += response_data['delta']
 
                     elif response_data['type'] == 'response.output_audio_transcript.done':
                         logger.info(
@@ -270,12 +285,16 @@ class OpenAIRealtimeAPIWrapper:
                         )
                         if message is not None:
                             # An assistant response was still in progress: cancel it
-                            # server-side so no further transcript/audio deltas for it
-                            # arrive, and close out the local accumulator so the *next*
-                            # response starts a fresh message instead of appending onto
-                            # this (now-interrupted) one out of chronological order.
+                            # server-side, remember its response_id so any deltas for
+                            # it still in flight (sent before the server honored our
+                            # cancel) get dropped instead of starting a new message
+                            # *after* the user's interrupting turn, and tell the
+                            # WebSocket layer to flush whatever audio it already
+                            # handed the client (which keeps playing out otherwise).
+                            self._cancelled_response_id = self._current_response_id
                             await websocket.send(json.dumps(dict(type = 'response.cancel')))
                             message = None
+                            self._barge_in_event.set()
                         # Prepare container when user starts speaking to avoid overlap with AI transcript
                         user_message = dict(role = 'user', content = None)
                         self._messages.append(user_message)
@@ -293,6 +312,9 @@ class OpenAIRealtimeAPIWrapper:
                         # cancelled/interrupted); the next response.output_audio_transcript.delta
                         # must start a fresh message rather than append to a stale one.
                         message = None
+                        done_response_id = response_data.get('response', {}).get('id')
+                        if done_response_id and done_response_id == self._cancelled_response_id:
+                            self._cancelled_response_id = None
                         if self._ending:
                             remaining_seconds = self._play_stream.samples / CLIENT_SAMPLE_RATE
                             logger.info(
@@ -397,6 +419,18 @@ class OpenAIRealtimeAPIWrapper:
         """Stop operation
         """
         self._recording = False
+
+    def consume_barge_in(self) -> bool:
+        """Check whether the user just interrupted the assistant, clearing the flag
+
+        Used by the WebSocket layer to know when to tell the client to stop
+        any audio it already has scheduled/buffered for playback, since audio
+        already sent over the wire keeps playing out client-side otherwise.
+        """
+        if self._barge_in_event.is_set():
+            self._barge_in_event.clear()
+            return True
+        return False
 
     def reset_stream(self, play_stream_only: bool = False):
         """Reset audio data stream

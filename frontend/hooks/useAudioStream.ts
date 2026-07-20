@@ -26,6 +26,33 @@ export function useAudioStream(
   const wsRef = useRef<WebSocket | null>(null);
   const audioCaptureRef = useRef<AudioCaptureManager | null>(null);
   const audioPlaybackRef = useRef<AudioPlaybackManager | null>(null);
+  // Raw per-backend-index transcript content, keyed by the stable index the
+  // backend assigned when the underlying message was created. The user's own
+  // transcript (via Whisper) commonly arrives well after the assistant's
+  // reply to it has already started streaming in, so messages do NOT arrive
+  // over the WebSocket in index order. We keep the untouched raw content here
+  // and re-derive the displayed bubbles from it sorted by index every time,
+  // instead of trusting arrival order.
+  const rawMessagesRef = useRef<Map<number, { role: 'user' | 'assistant'; text: string }>>(
+    new Map(),
+  );
+
+  const recomputeMerged = (): Message[] => {
+    const sorted = Array.from(rawMessagesRef.current.entries()).sort(
+      (a, b) => a[0] - b[0],
+    );
+    const merged: Message[] = [];
+    for (const [index, msg] of sorted) {
+      if (!msg.text) continue;
+      const last = merged[merged.length - 1];
+      if (last && last.role === msg.role) {
+        last.text += msg.text;
+      } else {
+        merged.push({ role: msg.role, text: msg.text, index });
+      }
+    }
+    return merged;
+  };
 
   useEffect(() => {
     if (!isActive) {
@@ -45,6 +72,9 @@ export function useAudioStream(
       }
       return;
     }
+
+    rawMessagesRef.current = new Map();
+    setMessages([]);
 
     // Establish WebSocket connection
     const wsUrl = createWebSocketURL();
@@ -103,46 +133,18 @@ export function useAudioStream(
         if (message.type === 'status') {
           setStatus(message.message);
         } else if (message.type === 'transcript') {
-          setMessages((prev) => {
-            // Same message (by index): append the delta to it directly.
-            const sameMessage = prev.findIndex(
-              (m) => m.index === message.index,
-            );
-            if (sameMessage !== -1) {
-              const updated = [...prev];
-              updated[sameMessage] = {
-                ...updated[sameMessage],
-                text: updated[sameMessage].text + message.delta,
-              };
-              return updated;
-            }
-
-            // New message index, but same speaker as the last bubble
-            // (e.g. a response that got interrupted/restarted mid-reply):
-            // keep it as one continuous bubble instead of fragmenting the
-            // conversation into a new line per underlying message.
-            const last = prev[prev.length - 1];
-            if (last && last.role === message.role) {
-              const updated = [...prev];
-              updated[updated.length - 1] = {
-                ...last,
-                text: last.text + message.delta,
-                index: message.index,
-              };
-              return updated;
-            }
-
-            return [
-              ...prev,
-              {
-                role: message.role,
-                text: message.delta,
-                index: message.index,
-              },
-            ];
+          const existing = rawMessagesRef.current.get(message.index);
+          rawMessagesRef.current.set(message.index, {
+            role: message.role,
+            text: (existing?.text ?? '') + message.delta,
           });
+          setMessages(recomputeMerged());
         } else if (message.type === 'audio') {
           audioPlaybackRef.current?.playChunk(message.data);
+        } else if (message.type === 'clear_audio') {
+          // User barged in: stop whatever assistant audio is already
+          // scheduled client-side instead of letting it finish playing out.
+          audioPlaybackRef.current?.clear();
         }
       } catch (err) {
         console.error('Failed to parse WebSocket message:', err);
