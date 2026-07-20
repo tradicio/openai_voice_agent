@@ -7,3 +7,10 @@
 
 __pycache__/
 *.egg-info
+
+# Frontend (Next.js)
+frontend/node_modules/
+frontend/.env.local
+frontend/.next/
+frontend/*.log
+frontend/dist/
