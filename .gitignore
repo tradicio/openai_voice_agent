@@ -1,12 +1,24 @@
+# Streamlit (kept for reference, but not used)
 .streamlit/*
 !.streamlit/.keep
-.venv/
-.env
-.idea
-.claude
 
+# Python
+.venv/
 __pycache__/
 *.egg-info
+*.pyc
+.pytest_cache/
+.env
+backend/.env
+backend/.env.local
+backend/__pycache__/
+backend/.pytest_cache/
+
+# IDE
+.idea
+.claude
+*.swp
+*.swo
 
 # Frontend (Next.js)
 frontend/node_modules/
@@ -14,3 +26,5 @@ frontend/.env.local
 frontend/.next/
 frontend/*.log
 frontend/dist/
+frontend/out/
+frontend/.turbo/
