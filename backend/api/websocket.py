@@ -14,6 +14,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.realtime.realtime_client import OpenAIRealtimeAPIWrapper
 from src.prompts.prompts import load_prompts
+from src.audio.audio_utils import pcm_audio_to_audio_frame
+from src.realtime.config import (
+    CLIENT_SAMPLE_RATE, CLIENT_SAMPLE_WIDTH, CLIENT_CHANNELS,
+    FORMAT_MAPPING, LAYOUT_MAPPING
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,10 +81,17 @@ class AudioStreamSession:
             if not audio_bytes:
                 return
 
-            # Write to record stream FIFO
-            # The FIFO is fed by audio_frame_callback -> send() task
-            # For now, we acknowledge receipt
-            logger.debug(f"Received {len(audio_bytes)} bytes of audio")
+            # Convert PCM bytes to audio frame and write to FIFO
+            frame = pcm_audio_to_audio_frame(
+                audio_bytes,
+                format=FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
+                layout=LAYOUT_MAPPING[CLIENT_CHANNELS],
+                sample_rate=CLIENT_SAMPLE_RATE
+            )
+
+            # Write to the record FIFO buffer
+            self.api_wrapper._record_stream.write(frame)
+            logger.debug(f"Wrote {len(audio_bytes)} bytes to audio stream")
         except Exception as e:
             logger.error(f"Audio frame error: {e}")
 

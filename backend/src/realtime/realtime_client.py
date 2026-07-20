@@ -390,5 +390,15 @@ class OpenAIRealtimeAPIWrapper:
         """Reset audio data stream
         """
         if not play_stream_only:
-            self._record_stream = av.audio.fifo.AudioFifo()
-        self._play_stream = av.audio.fifo.AudioFifo()
+            # Only create new FIFO if not already initialized with format/layout
+            if not hasattr(self, '_record_stream') or self._record_stream is None:
+                self._record_stream = av.audio.fifo.AudioFifo(
+                    format = FORMAT_MAPPING[API_SAMPLE_WIDTH],
+                    layout = LAYOUT_MAPPING[API_CHANNELS],
+                )
+        # Only create new FIFO if not already initialized with format/layout
+        if not hasattr(self, '_play_stream') or self._play_stream is None:
+            self._play_stream = av.audio.fifo.AudioFifo(
+                format = FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
+                layout = LAYOUT_MAPPING[CLIENT_CHANNELS],
+            )
