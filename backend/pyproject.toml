@@ -2,7 +2,7 @@
 name = "openai-realtime-voice-chat-backend"
 version = "0.1.0"
 description = "FastAPI backend for OpenAI Realtime Voice Chat"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi~=0.100",
     "uvicorn[standard]~=0.24",

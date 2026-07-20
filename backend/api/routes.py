@@ -34,7 +34,7 @@ async def health_check() -> Dict[str, str]:
 
 
 @router.get("/api/prompts")
-async def get_prompts() -> Dict[str, Dict[str, str]]:
+async def get_prompts() -> Dict:
     """Get list of available prompts"""
     prompts = load_prompts()
     if not prompts:
@@ -42,11 +42,11 @@ async def get_prompts() -> Dict[str, Dict[str, str]]:
             status_code=404,
             detail="No prompts found"
         )
-    return prompts
+    return {"prompts": [{"key": k, "label": v["label"]} for k, v in prompts.items()]}
 
 
 @router.post("/api/session/timeout")
-async def update_session_timeout(timeout: int = 300) -> Dict[str, str]:
+async def update_session_timeout(timeout: int = 300) -> Dict:
     """Update session timeout (60-300 seconds)"""
     if timeout < 60 or timeout > 300:
         raise HTTPException(
@@ -55,4 +55,4 @@ async def update_session_timeout(timeout: int = 300) -> Dict[str, str]:
         )
 
     logger.info(f"Session timeout updated to {timeout} seconds")
-    return {"message": f"Session timeout set to {timeout} seconds"}
+    return {"status": "ok", "timeout": timeout}
