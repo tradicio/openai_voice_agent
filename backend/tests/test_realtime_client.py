@@ -1,11 +1,6 @@
-import base64
-import json
 
-import pytest
 from src.audio.audio_utils import pcm_audio_to_audio_frame
 from src.realtime.config import (
-    API_CHANNELS,
-    API_SAMPLE_WIDTH,
     CLIENT_CHANNELS,
     CLIENT_SAMPLE_RATE,
     CLIENT_SAMPLE_WIDTH,
@@ -14,7 +9,6 @@ from src.realtime.config import (
 )
 from src.realtime.realtime_client import (
     OpenAIRealtimeAPIWrapper,
-    TerminateTaskGroup,
 )
 
 
