@@ -20,12 +20,9 @@ from src.realtime.realtime_client import (
 
 
 class FakeWebSocket:
-    """Feeds scripted events into receive() then ends the loop.
+    """Feeds scripted events into receive(), then raises to end the loop.
 
-    receive() loops on ``await websocket.recv()`` and breaks on any
-    exception, then raises TerminateTaskGroup. Raising once the script is
-    exhausted makes receive() terminate so the test can assert on what was
-    sent. ``send`` records each outbound message as a parsed dict.
+    ``send`` records each outbound message as a parsed dict.
     """
 
     def __init__(self, incoming):
@@ -66,10 +63,8 @@ def test_read_play_audio_counts_samples():
 
 
 def test_reset_play_stream_drops_buffered_audio_on_barge_in():
-    # On barge-in the handler calls reset_stream(play_stream_only=True) to
-    # drop assistant audio still buffered but not yet sent to the client.
-    # If it no-ops, that backlog keeps streaming out and playback doesn't
-    # actually stop when the user interrupts.
+    # On barge-in, reset_stream(play_stream_only=True) must drop buffered
+    # assistant audio; if it no-ops, playback won't stop on interrupt.
     wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
     wrapper.reset_stream()
     wrapper._play_stream.write(_client_frame(480))
@@ -80,11 +75,8 @@ def test_reset_play_stream_drops_buffered_audio_on_barge_in():
 
 
 async def test_barge_in_stops_playback_during_audio_tail():
-    # Audio is still playing from the buffered backlog, but the assistant
-    # transcript stream has already ended (so the receive loop's local
-    # `message` is None) — the common case, since audio outlasts the
-    # transcript by seconds. A barge-in here must STILL stop playback:
-    # empty the buffered audio and signal clear_audio to the client.
+    # Audio outlasts the transcript by seconds, so a barge-in during the
+    # audio tail must still stop playback and signal clear_audio.
     wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
     wrapper.reset_stream()
     wrapper._current_item_id = "item_A"

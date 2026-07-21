@@ -40,8 +40,8 @@ MONITOR_TASK_TIMEOUT_S = 2
 API_TASK_TIMEOUT_S = 5
 STREAM_TASK_TIMEOUT_S = 2
 
-# WebSocket hardening: reject oversized messages and cap the rate of
-# incoming audio frames so a single client can't exhaust memory/CPU.
+# Reject oversized messages and cap the audio frame rate so a single
+# client can't exhaust memory/CPU.
 MAX_MESSAGE_BYTES = 128 * 1024
 MAX_AUDIO_MESSAGES_PER_SECOND = 50
 
@@ -73,7 +73,6 @@ class AudioStreamSession:
 
         try:
             while True:
-                # Receive message from client
                 data = await self.websocket.receive_text()
 
                 if len(data) > MAX_MESSAGE_BYTES:
@@ -170,9 +169,8 @@ class AudioStreamSession:
         """
         try:
             while self.recording:
-                # Snapshot: receive() may insert a new item mid-iteration, and
-                # iterating a dict while it grows raises RuntimeError. New items
-                # are simply picked up on the next poll.
+                # Snapshot: receive() may insert items mid-iteration (which
+                # would raise RuntimeError); new ones are picked up next poll.
                 items = list(self.api_wrapper._items.items())
                 for item_id, item in items:
                     text = item.get("text")
@@ -206,10 +204,8 @@ class AudioStreamSession:
         try:
             while self.recording:
                 if self.api_wrapper.consume_barge_in():
-                    # The user just interrupted the assistant: audio
-                    # already sent to the client is likely still
-                    # scheduled for playback there, so tell it to stop
-                    # immediately instead of waiting it out.
+                    # User interrupted: tell the client to stop audio it has
+                    # already scheduled instead of waiting it out.
                     await self.websocket.send_text(
                         json.dumps({"type": "clear_audio"})
                     )
@@ -245,12 +241,10 @@ class AudioStreamSession:
             return
 
         try:
-            # Decode base64 audio to bytes
             audio_bytes = base64.b64decode(message.data)
             if not audio_bytes:
                 return
 
-            # Convert PCM bytes to audio frame and write to FIFO
             frame = pcm_audio_to_audio_frame(
                 audio_bytes,
                 format=FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
@@ -258,7 +252,6 @@ class AudioStreamSession:
                 sample_rate=CLIENT_SAMPLE_RATE
             )
 
-            # Write to the record FIFO buffer
             self.api_wrapper._record_stream.write(frame)
             logger.debug(f"Wrote {len(audio_bytes)} bytes to audio stream")
         except Exception as e:
@@ -302,7 +295,6 @@ class AudioStreamSession:
         await self._send_status("Starting conversation...")
 
         try:
-            # Set up FIFO buffers for audio
             self.api_wrapper._record_stream = av.audio.fifo.AudioFifo(
                 format=self.api_wrapper._resampler_for_api.format,
                 layout=self.api_wrapper._resampler_for_api.layout,
@@ -312,15 +304,13 @@ class AudioStreamSession:
                 layout=self.api_wrapper._resampler_for_client.layout,
             )
 
-            # Run the API connection in a background task so the
-            # message handler loop can keep servicing the client.
+            # Run the API connection in the background so the handler loop
+            # keeps servicing the client.
             self.api_task = asyncio.create_task(self.api_wrapper.run())
-            # Monitor and forward messages from API to client
             self.last_transcript_lengths = {}
             self.monitor_task = asyncio.create_task(
                 self._monitor_messages()
             )
-            # Stream audio responses back to client
             self.stream_task = asyncio.create_task(
                 self._stream_audio_responses()
             )
@@ -337,7 +327,6 @@ class AudioStreamSession:
         self.api_wrapper.stop()
         self.recording = False
 
-        # Wait for monitor task to complete
         if self.monitor_task and not self.monitor_task.done():
             try:
                 await asyncio.wait_for(
@@ -347,7 +336,6 @@ class AudioStreamSession:
                 logger.warning("Monitor task did not complete within timeout")
                 self.monitor_task.cancel()
 
-        # Wait for API task to complete
         if self.api_task and not self.api_task.done():
             try:
                 await asyncio.wait_for(
@@ -357,7 +345,6 @@ class AudioStreamSession:
                 logger.warning("API task did not complete within timeout")
                 self.api_task.cancel()
 
-        # Wait for stream task to complete
         if self.stream_task and not self.stream_task.done():
             try:
                 await asyncio.wait_for(

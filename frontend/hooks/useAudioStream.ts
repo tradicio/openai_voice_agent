@@ -31,8 +31,7 @@ function insertSorted(indices: number[], value: number): void {
 }
 
 function encodeAudioFrame(data: Float32Array): string {
-  // Convert mono Float32 to interleaved stereo Int16 PCM
-  // (backend expects CLIENT_CHANNELS channels)
+  // Mono Float32 -> interleaved stereo Int16 PCM (backend expects CLIENT_CHANNELS)
   const buffer = new ArrayBuffer(data.length * 2 * CLIENT_CHANNELS);
   const view = new Int16Array(buffer);
   for (let i = 0; i < data.length; i++) {
@@ -51,19 +50,17 @@ export function useAudioStream(
 ) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [status, setStatus] = useState('');
-  // Refs (not state) so the audio callback always sees the live instance
-  // instead of a stale closure captured before the WebSocket/state updated.
+  // Refs (not state) so the audio callback sees the live instance, not a
+  // stale closure.
   const wsRef = useRef<WebSocket | null>(null);
   const audioCaptureRef = useRef<AudioCaptureManager | null>(null);
   const audioPlaybackRef = useRef<AudioPlaybackManager | null>(null);
-  // Raw transcript content keyed by the backend-assigned `seq` — a stable,
-  // monotonically increasing id assigned when the underlying conversation
-  // item was first created. `seq` is BOTH the row identity and the sort
-  // order: the user's Whisper transcript often arrives after the assistant
-  // has already started replying, so messages do NOT arrive in seq order.
+  // Transcript content keyed by backend `seq` (stable row id + sort order).
+  // Messages don't arrive in seq order: the user's Whisper transcript often
+  // lands after the assistant has begun replying.
   const rawMessagesRef = useRef<Map<number, RawMessage>>(new Map());
-  // Seqs seen so far, kept sorted incrementally (see insertSorted) so
-  // re-deriving the row list never needs a fresh O(n log n) sort.
+  // Seqs seen so far, kept sorted incrementally so re-deriving rows never
+  // needs a fresh sort.
   const orderedSeqsRef = useRef<number[]>([]);
 
   const applyTranscriptDelta = (
@@ -79,8 +76,7 @@ export function useAudioStream(
     if (!existing) {
       insertSorted(orderedSeqsRef.current, seq);
     }
-    // One row per seq, in seq order. No merging of consecutive same-role
-    // turns: a finished or interrupted turn always yields a new seq next.
+    // One row per seq, in seq order; turns are never merged.
     return orderedSeqsRef.current.map((s) => {
       const msg = rawMessagesRef.current.get(s)!;
       return { role: msg.role, text: msg.text, seq: s };
@@ -94,7 +90,6 @@ export function useAudioStream(
 
   useEffect(() => {
     if (!isActive) {
-      // Cleanup
       if (wsRef.current) {
         sendControlMessage(wsRef.current, 'stop');
         wsRef.current.close();
@@ -114,7 +109,6 @@ export function useAudioStream(
     resetTranscript();
     setMessages([]);
 
-    // Establish WebSocket connection
     const wsUrl = createWebSocketURL();
     const newWs = new WebSocket(wsUrl);
     wsRef.current = newWs;
@@ -145,8 +139,7 @@ export function useAudioStream(
         } else if (message.type === 'audio') {
           audioPlaybackRef.current?.playChunk(message.data);
         } else if (message.type === 'clear_audio') {
-          // User barged in: stop whatever assistant audio is already
-          // scheduled client-side instead of letting it finish playing out.
+          // User barged in: stop assistant audio already scheduled client-side.
           audioPlaybackRef.current?.clear();
         }
       } catch (err) {
@@ -159,18 +152,15 @@ export function useAudioStream(
 
       playback.initialize();
 
-      // Send initial config
       sendConfigMessage(newWs, {
         prompt_key: promptKey,
         timeout,
       });
 
-      // Initialize audio capture
       const manager = new AudioCaptureManager();
       await manager.initialize(handleAudioFrame);
       audioCaptureRef.current = manager;
 
-      // Start conversation
       sendControlMessage(newWs, 'start');
     };
 

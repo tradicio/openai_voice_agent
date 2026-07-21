@@ -152,9 +152,8 @@ def test_config_unknown_prompt_key_is_reported():
 def test_audio_frame_ignored_when_not_recording():
     with client.websocket_connect("/ws/audio", headers=ORIGIN_HEADERS) as ws:
         ws.send_text(json.dumps({"type": "audio", "data": "AAAA"}))
-        # The frame above is silently dropped since no conversation is
-        # active; send a config message to confirm the handler loop is
-        # still alive and processing messages normally afterwards.
+        # Frame is dropped (no active conversation); the config message
+        # confirms the handler loop is still alive.
         ws.send_text(json.dumps({"type": "config", "timeout": 90}))
         data = ws.receive_json()
         assert data == {"type": "status", "message": "Timeout updated"}

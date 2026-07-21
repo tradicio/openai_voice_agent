@@ -76,9 +76,8 @@ class OpenAIRealtimeAPIWrapper:
         self._ending = False
 
         self._recording = False
-        # item_id -> {"role", "text", "seq", "status"}. Insertion-ordered so
-        # iteration yields creation order. This is the source of truth for the
-        # transcript rows shown to the client, replacing positional _messages.
+        # item_id -> {"role", "text", "seq", "status"}, insertion-ordered.
+        # Source of truth for the transcript rows shown to the client.
         self._items: dict[str, dict] = {}
         self._next_seq = 0
         self._current_response_id = None
@@ -220,13 +219,11 @@ class OpenAIRealtimeAPIWrapper:
                     response_data = json.loads(response)
 
                     if response_data['type'] == 'response.output_audio.delta':
-                        # Drop leftover audio for a response we already cancelled;
-                        # it's still in flight from before the server honored our
-                        # cancel and must not be queued for playback.
+                        # Drop leftover audio still in flight for an
+                        # already-cancelled response.
                         if self._cancelled_response_id is not None and \
                                 response_data.get('response_id') == self._cancelled_response_id:
                             pass
-                        # Queue audio data from server
                         elif (base64_audio := response_data['delta']):
                             item_id = response_data.get('item_id')
                             if item_id is not None and \
@@ -235,9 +232,9 @@ class OpenAIRealtimeAPIWrapper:
                                 self._current_content_index = \
                                     response_data.get('content_index', 0)
                                 self._played_samples = 0
-                            # Mark the response active so a barge-in stops
-                            # generation even if no transcript delta has
-                            # arrived yet (audio can lead the transcript).
+                            # Mark the response active so a barge-in can cancel
+                            # it before any transcript delta arrives (audio
+                            # leads the transcript).
                             self._current_response_id = \
                                 response_data.get('response_id')
                             pcm_audio = base64.b64decode(base64_audio)
@@ -258,11 +255,9 @@ class OpenAIRealtimeAPIWrapper:
                             )
 
                     elif response_data['type'] == 'response.output_audio_transcript.delta':
-                        # logger.debug('Event: %s', response_data['type'])  # Skipped as it occurs too frequently
-                        # Drop leftover transcript for a response we already
-                        # cancelled (see input_audio_buffer.speech_started below):
-                        # it would otherwise start a brand new message *after* the
-                        # user's interrupting turn, reversing the visible order.
+                        # Drop leftover transcript for an already-cancelled
+                        # response; it would otherwise appear after the user's
+                        # interrupting turn, reversing the visible order.
                         if self._cancelled_response_id is None or \
                                 response_data.get('response_id') != self._cancelled_response_id:
                             self._current_response_id = response_data.get('response_id')
@@ -304,10 +299,9 @@ class OpenAIRealtimeAPIWrapper:
                         if item_id is not None:
                             item = self._get_or_create_item(item_id, 'user')
                             transcript = response_data.get('transcript')
-                            # Keep text append-only: only set from 'completed'
-                            # when no streaming deltas already populated it
-                            # (whisper-1 sends only 'completed'; other models
-                            # stream '.delta' then send the full 'completed').
+                            # Append-only: only fill from 'completed' if no
+                            # deltas arrived (whisper-1 sends only 'completed';
+                            # other models stream deltas first).
                             if transcript and not item['text']:
                                 item['text'] = transcript
                             item['status'] = 'done'
@@ -324,13 +318,10 @@ class OpenAIRealtimeAPIWrapper:
                         )
 
                     elif response_data['type'] == 'input_audio_buffer.speech_started':
-                        # User barged in. STOP PLAYBACK unconditionally: drop
-                        # the assistant audio still buffered server-side and
-                        # tell the client to stop what it already scheduled.
-                        # This must not depend on transcript state — audio
-                        # plays from the buffered backlog for seconds after the
-                        # transcript ends (and after response.done), and an
-                        # interruption during that tail must still stop it.
+                        # User barged in: stop playback unconditionally. Audio
+                        # plays from the backlog for seconds after the
+                        # transcript ends, so this must not depend on
+                        # transcript state — the tail must still be stopped.
                         self.reset_stream(play_stream_only = True)
                         self._barge_in_event.set()
                         logger.debug(
@@ -339,14 +330,10 @@ class OpenAIRealtimeAPIWrapper:
                             response_data.get('item_id'),
                         )
                         if self._current_response_id is not None:
-                            # A response is still active server-side. First
-                            # tell the server how much of the current assistant
-                            # item the user actually heard, so its conversation
-                            # state doesn't keep audio generated but cut off
-                            # before playback. Then cancel it and remember its
-                            # response_id so any deltas still in flight get
-                            # dropped instead of refilling the buffer we just
-                            # cleared.
+                            # A response is still active server-side. Tell the
+                            # server how much the user actually heard (so its
+                            # state matches), then cancel it and remember the
+                            # id so in-flight deltas get dropped, not replayed.
                             if self._current_item_id is not None and \
                                     self._played_samples > 0:
                                 audio_end_ms = round(
@@ -368,10 +355,8 @@ class OpenAIRealtimeAPIWrapper:
                                 )
                             self._cancelled_response_id = \
                                 self._current_response_id
-                            # Mark the interrupted assistant row so the next
-                            # response starts a fresh row instead of appending.
-                            # The audio item id equals the assistant transcript
-                            # item id for the same output item.
+                            # Mark the interrupted row so the next response
+                            # starts fresh instead of appending.
                             if self._current_item_id is not None and \
                                     self._current_item_id in self._items:
                                 self._items[self._current_item_id]['status'] = \
@@ -379,13 +364,11 @@ class OpenAIRealtimeAPIWrapper:
                             await websocket.send(json.dumps(dict(
                                 type = 'response.cancel'
                             )))
-                        # Reset per-turn state so the next response (and any
-                        # later barge-in) starts from a clean slate.
+                        # Reset per-turn state for the next response.
                         self._current_item_id = None
                         self._played_samples = 0
-                        # Reserve the user's row now (before the assistant
-                        # replies) so its seq sorts ahead of the reply.
-                        # speech_started carries the user message's item_id.
+                        # Reserve the user's row now so its seq sorts ahead of
+                        # the reply (speech_started carries the user item_id).
                         item_id = response_data.get('item_id')
                         if item_id is not None:
                             self._get_or_create_item(item_id, 'user')
@@ -399,9 +382,9 @@ class OpenAIRealtimeAPIWrapper:
 
                     elif response_data['type'] == 'response.done':
                         logger.debug('%s: %s', response_data['type'], response_data)
-                        # No more deltas will arrive for this response (completed or
-                        # cancelled/interrupted); the next response.output_audio_transcript.delta
-                        # must start a fresh item rather than append to a stale one.
+                        # No more deltas for this response; the next transcript
+                        # delta must start a fresh item, not append to a stale
+                        # one.
                         self._current_item_id = None
                         self._current_response_id = None
                         done_response_id = response_data.get('response', {}).get('id')
@@ -430,10 +413,8 @@ class OpenAIRealtimeAPIWrapper:
                             'rate_limits.updated',
                         )
                     ):
-                        # Log content
                         logger.debug('%s: %s', response_data['type'], response_data)
                     else:
-                        # Only log event name
                         logger.debug('Event: %s', response_data['type'])
                 else:
                     logger.debug('No response')
@@ -506,8 +487,8 @@ class OpenAIRealtimeAPIWrapper:
         self._ending = False
         self._items = {}
         self._next_seq = 0
-        # Clear per-turn tracking so a restarted wrapper can't truncate
-        # against a previous session's item/playback position.
+        # Clear per-turn tracking so a restart can't truncate against a
+        # previous session's item/playback position.
         self._current_item_id = None
         self._current_content_index = 0
         self._played_samples = 0
@@ -524,8 +505,7 @@ class OpenAIRealtimeAPIWrapper:
         """Check whether the user just interrupted the assistant, clearing the flag
 
         Used by the WebSocket layer to know when to tell the client to stop
-        any audio it already has scheduled/buffered for playback, since audio
-        already sent over the wire keeps playing out client-side otherwise.
+        audio it already has scheduled, which otherwise keeps playing out.
         """
         if self._barge_in_event.is_set():
             self._barge_in_event.clear()
@@ -536,9 +516,7 @@ class OpenAIRealtimeAPIWrapper:
         """Return the transcript item for ``item_id``, creating it if new.
 
         A stable, monotonically increasing ``seq`` is assigned once, when the
-        item is first seen, and defines the row order shown to the client. The
-        ``item_id`` comes from the Realtime API and correlates every delta /
-        completed event to the right row regardless of arrival order.
+        item is first seen, and defines the row order shown to the client.
 
         Args:
             item_id (str): The Realtime API conversation item id.
@@ -559,10 +537,8 @@ class OpenAIRealtimeAPIWrapper:
     def read_play_audio(self, nsamples: int, partial: bool = True):
         """Drain playback audio, counting what has been sent to the client.
 
-        Wraps ``_play_stream.read`` so the amount of assistant audio handed
-        off toward the client is tracked in one place. The running total
-        (``_played_samples``) is what barge-in truncation uses to tell the
-        server how much of the current assistant item the user heard.
+        The running total (``_played_samples``) is what barge-in truncation
+        uses to tell the server how much of the current item the user heard.
 
         Args:
             nsamples (int): Number of samples to read from the play FIFO.
@@ -579,11 +555,9 @@ class OpenAIRealtimeAPIWrapper:
     def reset_stream(self, play_stream_only: bool = False):
         """Reset audio data stream
 
-        With ``play_stream_only`` the play FIFO is force-recreated (emptied),
-        not merely created-if-missing. This is what a barge-in relies on to
-        drop assistant audio still buffered but not yet sent to the client;
-        a plain "create if missing" no-ops on the existing FIFO, letting that
-        backlog keep streaming out so playback doesn't actually stop.
+        With ``play_stream_only`` the play FIFO is force-recreated (emptied)
+        rather than created-if-missing, so a barge-in actually drops the
+        buffered assistant audio instead of letting it keep streaming out.
         """
         if play_stream_only:
             self._play_stream = av.audio.fifo.AudioFifo(
@@ -591,7 +565,6 @@ class OpenAIRealtimeAPIWrapper:
                 layout = LAYOUT_MAPPING[CLIENT_CHANNELS],
             )
             return
-        # Only create new FIFO if not already initialized with format/layout
         if not hasattr(self, '_record_stream') or self._record_stream is None:
             self._record_stream = av.audio.fifo.AudioFifo(
                 format = FORMAT_MAPPING[API_SAMPLE_WIDTH],
