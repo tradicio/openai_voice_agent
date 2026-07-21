@@ -12,12 +12,6 @@ export default function Home() {
   const [selectedPrompt, setSelectedPrompt] = useState('');
   const [sessionTimeout, setSessionTimeout] = useState(120);
 
-  const { messages, status } = useAudioStream(
-    isRecording,
-    selectedPrompt,
-    sessionTimeout,
-  );
-
   const handleStartConversation = () => {
     setIsRecording(true);
   };
@@ -25,6 +19,13 @@ export default function Home() {
   const handleStopConversation = () => {
     setIsRecording(false);
   };
+
+  const { messages, status } = useAudioStream(
+    isRecording,
+    selectedPrompt,
+    sessionTimeout,
+    handleStopConversation,
+  );
 
   return (
     <div className="space-y-6">

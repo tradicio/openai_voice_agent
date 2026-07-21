@@ -191,6 +191,38 @@ def test_barge_in_triggers_clear_audio(monkeypatch):
         }
 
 
+class FakeAPIWrapperSelfEnding(FakeAPIWrapper):
+    """Finishes its run on its own, as end_conversation / the timeout would.
+
+    ``run`` returns without the client ever sending "stop", mirroring the
+    assistant's ``end_conversation`` tool (or the session timeout) ending the
+    call server-side. ``recording`` is left True to also cover the timeout
+    path, where the API wrapper's own flag stays set.
+    """
+
+    async def run(self):
+        self.recording = True
+        await asyncio.sleep(0.05)
+
+
+def test_server_ended_conversation_notifies_client(monkeypatch):
+    monkeypatch.setattr(
+        ws_module, "OpenAIRealtimeAPIWrapper", FakeAPIWrapperSelfEnding
+    )
+    with client.websocket_connect("/ws/audio", headers=ORIGIN_HEADERS) as ws:
+        ws.send_text(json.dumps({"type": "control", "action": "start"}))
+        assert ws.receive_json() == {
+            "type": "status", "message": "Starting conversation..."
+        }
+
+        # The run finishes on its own; once buffered audio is flushed the
+        # session tells the client so it can reset its UI (ignore any audio).
+        msg = ws.receive_json()
+        while msg.get("type") != "conversation_ended":
+            msg = ws.receive_json()
+        assert msg == {"type": "conversation_ended"}
+
+
 class FakeAPIWrapperWithItems(FakeAPIWrapper):
     """Exposes preset transcript items so the monitor forwards them once."""
 

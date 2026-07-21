@@ -47,9 +47,14 @@ export function useAudioStream(
   isActive: boolean,
   promptKey: string,
   timeout: number,
+  onConversationEnded?: () => void,
 ) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [status, setStatus] = useState('');
+  const onConversationEndedRef = useRef(onConversationEnded);
+  onConversationEndedRef.current = onConversationEnded;
+
+  const endedByServerRef = useRef(false);
   // Refs (not state) so the audio callback sees the live instance, not a
   // stale closure.
   const wsRef = useRef<WebSocket | null>(null);
@@ -108,6 +113,7 @@ export function useAudioStream(
 
     resetTranscript();
     setMessages([]);
+    endedByServerRef.current = false;
 
     const wsUrl = createWebSocketURL();
     const newWs = new WebSocket(wsUrl);
@@ -141,6 +147,12 @@ export function useAudioStream(
         } else if (message.type === 'clear_audio') {
           // User barged in: stop assistant audio already scheduled client-side.
           audioPlaybackRef.current?.clear();
+        } else if (message.type === 'conversation_ended') {
+          // Assistant said goodbye (or the session timed out): reset the UI
+          // back to the idle state as if the user had pressed stop.
+          endedByServerRef.current = true;
+          setStatus('Conversation ended');
+          onConversationEndedRef.current?.();
         }
       } catch (err) {
         console.error('Failed to parse WebSocket message:', err);
@@ -172,7 +184,9 @@ export function useAudioStream(
     };
 
     newWs.onclose = () => {
-      setStatus('Disconnected');
+      // A server-ended call closes this socket during teardown; keep the
+      // "Conversation ended" message rather than overwriting it.
+      setStatus(endedByServerRef.current ? 'Conversation ended' : 'Disconnected');
     };
 
     return () => {

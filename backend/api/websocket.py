@@ -107,6 +107,21 @@ class AudioStreamSession:
             logger.error(f"WebSocket error: {e}")
             await self._send_status("An unexpected error occurred")
 
+    async def _send_conversation_ended(self) -> None:
+        """Tell the client the call ended server-side, ignoring send failures.
+
+        Emitted when the assistant's ``end_conversation`` tool (or the
+        session timeout) stops the conversation on the server, so the
+        client can reset its UI back to the idle "Start Conversation"
+        state without the user having pressed stop.
+        """
+        try:
+            await self.websocket.send_text(
+                json.dumps({"type": "conversation_ended"})
+            )
+        except Exception:
+            pass
+
     async def _send_status(self, message: str) -> None:
         """Send a status message to the client, ignoring send failures.
 
@@ -224,6 +239,14 @@ class AudioStreamSession:
                         f"Sent {len(pcm_audio)} bytes of audio to client"
                     )
                 else:
+                    if (
+                        self.recording
+                        and self.api_task is not None
+                        and self.api_task.done()
+                    ):
+                        self.recording = False
+                        await self._send_conversation_ended()
+                        break
                     await asyncio.sleep(STREAM_IDLE_SLEEP_S)
         except Exception as e:
             logger.error(f"Error streaming audio responses: {e}")
