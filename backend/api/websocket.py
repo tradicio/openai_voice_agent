@@ -62,8 +62,8 @@ class AudioStreamSession:
         prompts = load_prompts()
         self.prompt_key = next(iter(prompts), "default")
         self.loop = asyncio.get_event_loop()
-        # message index -> chars already forwarded
-        self.last_transcript_lengths: dict[int, int] = {}
+        # item_id -> chars already forwarded
+        self.last_transcript_lengths: dict[str, int] = {}
         self._audio_message_times: deque = deque()
 
     async def handle(self):
@@ -160,36 +160,38 @@ class AudioStreamSession:
         await self._send_status(reason)
 
     async def _monitor_messages(self):
-        """Monitor and forward transcript growth from API to client
+        """Monitor and forward transcript growth from API to client.
 
-        Messages are mutated in place as transcript deltas stream in
-        (e.g. assistant content starts as '' and grows), so we track how
-        many characters of each message we've already forwarded by index
-        and only send the newly-added substring, instead of diffing on
-        message count (which would forward a message once, prematurely,
-        and never send its later growth).
+        Items are mutated in place as transcript deltas stream in (text
+        starts as '' and grows), so we track how many characters of each
+        item we've already forwarded, keyed by the API's stable ``item_id``,
+        and send only the newly-added substring. The forwarded ``seq`` gives
+        the client a stable creation order for the rows.
         """
         try:
             while self.recording:
-                messages = self.api_wrapper._messages
-                for idx, msg in enumerate(messages):
-                    content = msg.get("content")
-                    if not content:
+                # Snapshot: receive() may insert a new item mid-iteration, and
+                # iterating a dict while it grows raises RuntimeError. New items
+                # are simply picked up on the next poll.
+                items = list(self.api_wrapper._items.items())
+                for item_id, item in items:
+                    text = item.get("text")
+                    if not text:
                         continue
-                    prev_len = self.last_transcript_lengths.get(idx, 0)
-                    if len(content) > prev_len:
-                        delta = content[prev_len:]
+                    prev_len = self.last_transcript_lengths.get(item_id, 0)
+                    if len(text) > prev_len:
+                        delta = text[prev_len:]
                         await self.websocket.send_text(
                             json.dumps({
                                 "type": "transcript",
-                                "role": msg.get("role"),
+                                "role": item.get("role"),
+                                "seq": item.get("seq"),
                                 "delta": delta,
-                                "index": idx,
                             })
                         )
-                        self.last_transcript_lengths[idx] = len(content)
+                        self.last_transcript_lengths[item_id] = len(text)
                         logger.debug(
-                            f"Forwarded {msg.get('role')} transcript "
+                            f"Forwarded {item.get('role')} transcript "
                             "delta to client"
                         )
                 await asyncio.sleep(MONITOR_POLL_INTERVAL_S)

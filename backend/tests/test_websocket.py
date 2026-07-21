@@ -34,7 +34,7 @@ class FakeAPIWrapper:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.recording = False
-        self._messages: list[dict] = []
+        self._items: dict[str, dict] = {}
         self._played_samples = 0
         self._resampler_for_api = av.audio.resampler.AudioResampler(
             format=FORMAT_MAPPING[API_SAMPLE_WIDTH],
@@ -190,3 +190,46 @@ def test_barge_in_triggers_clear_audio(monkeypatch):
         assert ws.receive_json() == {
             "type": "status", "message": "Conversation ended"
         }
+
+
+class FakeAPIWrapperWithItems(FakeAPIWrapper):
+    """Exposes preset transcript items so the monitor forwards them once."""
+
+    async def run(self):
+        self.recording = True
+        self._items = {
+            "user_1": {"role": "user", "text": "Hello", "seq": 0,
+                       "status": "done"},
+            "asst_1": {"role": "assistant", "text": "Hi there", "seq": 1,
+                       "status": "done"},
+        }
+        while self.recording:
+            await asyncio.sleep(0.01)
+
+
+def test_monitor_forwards_seq_keyed_transcripts(monkeypatch):
+    monkeypatch.setattr(
+        ws_module, "OpenAIRealtimeAPIWrapper", FakeAPIWrapperWithItems
+    )
+    with client.websocket_connect("/ws/audio", headers=ORIGIN_HEADERS) as ws:
+        ws.send_text(json.dumps({"type": "control", "action": "start"}))
+        assert ws.receive_json() == {
+            "type": "status", "message": "Starting conversation..."
+        }
+
+        transcripts = {}
+        # Collect the two forwarded transcript messages (ignore any audio).
+        while len(transcripts) < 2:
+            msg = ws.receive_json()
+            if msg.get("type") == "transcript":
+                transcripts[msg["seq"]] = msg
+
+        assert transcripts[0] == {
+            "type": "transcript", "role": "user", "seq": 0, "delta": "Hello"
+        }
+        assert transcripts[1] == {
+            "type": "transcript", "role": "assistant", "seq": 1,
+            "delta": "Hi there"
+        }
+
+        ws.send_text(json.dumps({"type": "control", "action": "stop"}))
