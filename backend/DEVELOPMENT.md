@@ -42,8 +42,7 @@ Methods:
 {
   "prompts": [
     {"key": "default", "label": "General Assistant"},
-    {"key": "italian_tutor", "label": "Italian Tutor"},
-    {"key": "customer_support", "label": "Customer Support"}
+    {"key": "consulente_arredo", "label": "Consulente d'Arredo"}
   ]
 }
 ```
