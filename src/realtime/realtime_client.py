@@ -9,7 +9,6 @@ import websockets
 from src.audio.audio_utils import (
     audio_frame_to_pcm_audio,
     pcm_audio_to_audio_frame,
-    get_blank_audio_frame,
 )
 from src.realtime.config import (
     REALTIME_API_URL,
@@ -96,43 +95,6 @@ class OpenAIRealtimeAPIWrapper:
             layout = LAYOUT_MAPPING[CLIENT_CHANNELS],
             rate = CLIENT_SAMPLE_RATE
         )
-
-    def audio_frame_callback(self, frame: av.AudioFrame) -> av.AudioFrame:
-        """Audio data processing callback function for streamlit-webrtc
-
-        Args:
-            frame (av.AudioFrame): Audio data frame
-        Returns:
-            av.AudioFrame: Processed audio data frame
-        """
-        stream_pts = self._record_stream.samples_written * self._record_stream.pts_per_sample
-        if frame.pts > stream_pts:
-            logger.debug('Missing samples: %s < %s; Filling them up...', stream_pts, frame.pts)
-            blank_frame = get_blank_audio_frame(
-                format = frame.format.name,
-                layout = frame.layout.name,
-                samples = int((frame.pts - stream_pts) / self._record_stream.pts_per_sample),
-                sample_rate = frame.sample_rate
-            )
-            self._record_stream.write(blank_frame)
-        self._record_stream.write(frame)
-
-        new_frame = self.read_play_audio(frame.samples, partial=True)
-        if new_frame:
-            assert new_frame.format.name == frame.format.name
-            assert new_frame.layout.name == frame.layout.name
-            assert new_frame.sample_rate == frame.sample_rate
-        else:
-            # Return silence if empty
-            new_frame = get_blank_audio_frame(
-                format = frame.format.name,
-                layout = frame.layout.name,
-                samples = frame.samples,
-                sample_rate = frame.sample_rate
-            )
-        new_frame.pts = frame.pts
-        new_frame.time_base = frame.time_base
-        return new_frame
 
     async def run(self):
         """Start connection with OpenAI Realtime API and handle audio data transmission
@@ -444,16 +406,6 @@ class OpenAIRealtimeAPIWrapper:
         """Get recording status of audio data
         """
         return self._recording
-
-    @property
-    def valid_messages(self) -> list[dict]:
-        """Get valid chat messages in creation (seq) order.
-        """
-        return [
-            dict(role = item['role'], content = item['text'])
-            for item in sorted(self._items.values(), key = lambda i: i['seq'])
-            if item['text']
-        ]
 
     def set_session_timeout(self, timeout: int | float):
         """Set session timeout duration

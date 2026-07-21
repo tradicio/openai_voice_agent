@@ -17,17 +17,3 @@ def pcm_audio_to_audio_frame(
     frame = av.AudioFrame.from_ndarray(raw_data, format = format, layout = layout)
     frame.sample_rate = sample_rate
     return frame
-
-
-def get_blank_audio_frame(
-    *,
-    format: str,
-    layout: str,
-    samples: int,
-    sample_rate: int
-) -> av.AudioFrame:
-    frame = av.AudioFrame(format = format, layout = layout, samples = samples)
-    for p in frame.planes:
-        p.update(bytes(p.buffer_size))
-    frame.sample_rate = sample_rate
-    return frame

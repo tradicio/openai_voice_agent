@@ -9,7 +9,7 @@
 - `src/realtime/realtime_client.py` — OpenAI Realtime API wrapper (unchanged from original)
 - `src/audio/audio_utils.py` — Audio processing utilities
 - `src/prompts/prompts.py` and `prompts.yaml` — Prompt definitions
-- `src/utils.py` — Non-Streamlit utilities (logging, event loop, hashing)
+- `src/utils.py` — Shared utilities (logging, event loop, hashing)
 - `tests/test_api.py` — REST endpoint tests
 
 ## Key Components
@@ -18,7 +18,6 @@
 Core class managing OpenAI Realtime API connection. Unchanged from original project.
 
 Methods:
-- `audio_frame_callback()` — Processes incoming audio frames
 - `run()` — Async event loop managing send/receive/timer/status tasks
 - `stop()` — Stops the session
 - `set_session_timeout()` — Updates timeout

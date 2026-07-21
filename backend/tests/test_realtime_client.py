@@ -270,23 +270,3 @@ async def test_barge_in_marks_prior_assistant_row_interrupted_and_starts_new_row
     assert wrapper._items["asst_1"]["seq"] != wrapper._items["asst_2"]["seq"]
     # response.cancel was sent on barge-in.
     assert any(m.get("type") == "response.cancel" for m in ws.sent)
-
-
-async def test_valid_messages_orders_by_seq_and_drops_empty():
-    wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
-    wrapper.reset_stream()
-    ws = FakeWebSocket([
-        {"type": "input_audio_buffer.speech_started", "item_id": "user_1"},
-        {"type": "response.output_audio_transcript.delta",
-         "item_id": "asst_1", "response_id": "resp_1", "delta": "Hi"},
-        {"type": "conversation.item.input_audio_transcription.completed",
-         "item_id": "user_1", "transcript": "Hello"},
-    ])
-
-    with pytest.raises(TerminateTaskGroup):
-        await wrapper.receive(ws)
-
-    assert wrapper.valid_messages == [
-        {"role": "user", "content": "Hello"},
-        {"role": "assistant", "content": "Hi"},
-    ]
