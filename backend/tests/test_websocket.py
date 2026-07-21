@@ -35,6 +35,7 @@ class FakeAPIWrapper:
         self.api_key = api_key
         self.recording = False
         self._messages: list[dict] = []
+        self._played_samples = 0
         self._resampler_for_api = av.audio.resampler.AudioResampler(
             format=FORMAT_MAPPING[API_SAMPLE_WIDTH],
             layout=LAYOUT_MAPPING[API_CHANNELS],
@@ -58,6 +59,12 @@ class FakeAPIWrapper:
 
     def consume_barge_in(self) -> bool:
         return False
+
+    def read_play_audio(self, nsamples, partial=True):
+        frame = self._play_stream.read(nsamples, partial=partial)
+        if frame:
+            self._played_samples += frame.samples
+        return frame
 
     def set_session_timeout(self, timeout):
         self.session_timeout = timeout
