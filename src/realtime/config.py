@@ -16,7 +16,6 @@ REALTIME_API_CONFIG = dict(
             turn_detection = dict(
                 type = 'server_vad',
                 interrupt_response = True,
-                eagerness = "medium",
                 threshold = 0.5,
                 prefix_padding_ms = 100,
                 silence_duration_ms = 800,
