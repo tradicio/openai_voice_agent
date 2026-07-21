@@ -8,6 +8,26 @@
 
 **Tech Stack:** Python 3.11+ (async, `websockets`), FastAPI WebSocket, PyAV; Next.js/React/TypeScript frontend; pytest + pytest-asyncio (`asyncio_mode = auto`).
 
+## Reconciliation note (2026-07-21, executed inline in worktree)
+
+The parallel barge-in-truncation work advanced further (branch tip `2a04b5c`) and
+**restructured `speech_started`**. Executed against that state with these deviations from
+the task text below:
+
+- **Task 1 is already done** — its logging (`.delta` branch, item-id in the `completed` and
+  `speech_started` logs) is present in the rebased base. No action.
+- **Task 3 drops the `_active_assistant_item_id` flag.** `speech_started` now fires barge-in
+  unconditionally and guards cancel/truncate with `if self._current_response_id is not None:`;
+  `_current_response_id` is set on transcript/audio deltas and reset on `response.done`. That
+  existing signal replaces the planned flag. On barge-in, mark `self._items[self._current_item_id]`
+  interrupted (the audio item id equals the assistant transcript item id).
+- **The two truncation tests need no changes** — they set `_current_response_id` via their
+  scripted transcript delta, so the guard still fires. (Supersedes the Task 3 Step 1
+  instruction to add `item_id` to them.)
+- Execution is **inline** (Agent subagents run in the main checkout, not this worktree), and
+  commits land on branch `feat/transcript-per-turn-rows`. Test command:
+  `.venv/bin/python -m pytest`.
+
 ## Global Constraints
 
 - Run backend tests from the **repo root** (pyproject: `testpaths = ["backend/tests"]`, `pythonpath = ["backend"]`) with the project's Python **3.11+** interpreter (the code uses `except*`, invalid on 3.10). Command: `python -m pytest -q`.
