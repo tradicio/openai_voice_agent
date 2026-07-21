@@ -184,3 +184,21 @@ async def test_barge_in_without_playback_skips_truncate():
     types = [m["type"] for m in ws.sent]
     assert "conversation.item.truncate" not in types
     assert "response.cancel" in types
+
+
+def test_get_or_create_item_assigns_incrementing_seq_once():
+    wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
+
+    first = wrapper._get_or_create_item("item_A", "user")
+    second = wrapper._get_or_create_item("item_B", "assistant")
+    again = wrapper._get_or_create_item("item_A", "user")
+
+    assert first["seq"] == 0
+    assert first["role"] == "user"
+    assert first["status"] == "in_progress"
+    assert second["seq"] == 1
+    # Same id returns the same record; seq is not reassigned.
+    assert again is first
+    assert first["seq"] == 0
+    # Insertion order is creation order.
+    assert list(wrapper._items.keys()) == ["item_A", "item_B"]

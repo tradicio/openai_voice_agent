@@ -77,6 +77,11 @@ class OpenAIRealtimeAPIWrapper:
 
         self._recording = False
         self._messages = []
+        # item_id -> {"role", "text", "seq", "status"}. Insertion-ordered so
+        # iteration yields creation order. This is the source of truth for the
+        # transcript rows shown to the client, replacing positional _messages.
+        self._items: dict[str, dict] = {}
+        self._next_seq = 0
         self._current_response_id = None
         self._cancelled_response_id = None
         self._barge_in_event = asyncio.Event()
@@ -494,6 +499,27 @@ class OpenAIRealtimeAPIWrapper:
             self._barge_in_event.clear()
             return True
         return False
+
+    def _get_or_create_item(self, item_id: str, role: str) -> dict:
+        """Return the transcript item for ``item_id``, creating it if new.
+
+        A stable, monotonically increasing ``seq`` is assigned once, when the
+        item is first seen, and defines the row order shown to the client. The
+        ``item_id`` comes from the Realtime API and correlates every delta /
+        completed event to the right row regardless of arrival order.
+
+        Args:
+            item_id (str): The Realtime API conversation item id.
+            role (str): ``'user'`` or ``'assistant'``.
+        Returns:
+            dict: The item record ``{"role", "text", "seq", "status"}``.
+        """
+        item = self._items.get(item_id)
+        if item is None:
+            item = dict(role = role, text = '', seq = self._next_seq, status = 'in_progress')
+            self._items[item_id] = item
+            self._next_seq += 1
+        return item
 
     def read_play_audio(self, nsamples: int, partial: bool = True):
         """Drain playback audio, counting what has been sent to the client.
