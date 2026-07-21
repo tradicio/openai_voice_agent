@@ -14,7 +14,7 @@ REALTIME_API_CONFIG = dict(
                 model = 'whisper-1',
             ),
             turn_detection = dict(
-                type = 'semantic_vad',
+                type = 'server_vad',
                 interrupt_response = True,
                 eagerness = "medium",
                 threshold = 0.5,
