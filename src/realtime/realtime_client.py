@@ -312,6 +312,17 @@ class OpenAIRealtimeAPIWrapper:
                                 item['text'] = transcript
                             item['status'] = 'done'
 
+                    elif response_data['type'] == 'conversation.item.input_audio_transcription.failed':
+                        # Sent instead of '.completed' when a turn can't be
+                        # transcribed; logged at error level so the missing
+                        # user row is visible.
+                        logger.error(
+                            'Event: %s - item=%s error=%s',
+                            response_data['type'],
+                            response_data.get('item_id'),
+                            response_data.get('error'),
+                        )
+
                     elif response_data['type'] == 'input_audio_buffer.speech_started':
                         # User barged in. STOP PLAYBACK unconditionally: drop
                         # the assistant audio still buffered server-side and
