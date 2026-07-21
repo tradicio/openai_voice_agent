@@ -1,16 +1,9 @@
-# Streamlit (kept for reference, but not used)
-.streamlit/*
-!.streamlit/.keep
-
 # Python
 .venv/
 __pycache__/
 *.egg-info
 *.pyc
 .pytest_cache/
-.env
-.env
-backend/.env.local
 backend/__pycache__/
 backend/.pytest_cache/
 
@@ -28,3 +21,6 @@ frontend/*.log
 frontend/dist/
 frontend/out/
 frontend/.turbo/
+
+# Main
+.env
