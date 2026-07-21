@@ -49,7 +49,7 @@ class OpenAIRealtimeAPIWrapper:
     _instructions: str
     _ending: bool
     _recording: bool
-    _messages: list[dict]
+    _items: dict[str, dict]
     _resampler_for_api: av.audio.resampler.AudioResampler
     _resampler_for_client: av.audio.resampler.AudioResampler
     _record_stream: av.audio.fifo.AudioFifo
@@ -76,7 +76,6 @@ class OpenAIRealtimeAPIWrapper:
         self._ending = False
 
         self._recording = False
-        self._messages = []
         # item_id -> {"role", "text", "seq", "status"}. Insertion-ordered so
         # iteration yields creation order. This is the source of truth for the
         # transcript rows shown to the client, replacing positional _messages.
@@ -214,8 +213,6 @@ class OpenAIRealtimeAPIWrapper:
         Args:
             websocket (websockets.asyncio.client.ClientConnection): WebSocket client
         """
-        message = None
-        user_message = None
         while True:
             try:
                 response = await websocket.recv()
@@ -269,10 +266,10 @@ class OpenAIRealtimeAPIWrapper:
                         if self._cancelled_response_id is None or \
                                 response_data.get('response_id') != self._cancelled_response_id:
                             self._current_response_id = response_data.get('response_id')
-                            if not message:
-                                message = dict(role = 'assistant', content = '')
-                                self._messages.append(message)
-                            message['content'] += response_data['delta']
+                            item_id = response_data.get('item_id')
+                            if item_id is not None:
+                                item = self._get_or_create_item(item_id, 'assistant')
+                                item['text'] += response_data['delta']
 
                     elif response_data['type'] == 'response.output_audio_transcript.done':
                         logger.info(
@@ -280,7 +277,9 @@ class OpenAIRealtimeAPIWrapper:
                             response_data['type'],
                             response_data['transcript']
                         )
-                        message = None
+                        item_id = response_data.get('item_id')
+                        if item_id is not None and item_id in self._items:
+                            self._items[item_id]['status'] = 'done'
 
                     elif response_data['type'] == 'conversation.item.input_audio_transcription.delta':
                         logger.debug(
@@ -289,6 +288,10 @@ class OpenAIRealtimeAPIWrapper:
                             response_data.get('item_id'),
                             response_data.get('delta'),
                         )
+                        item_id = response_data.get('item_id')
+                        if item_id is not None:
+                            item = self._get_or_create_item(item_id, 'user')
+                            item['text'] += response_data.get('delta', '')
 
                     elif response_data['type'] == 'conversation.item.input_audio_transcription.completed':
                         logger.debug(
@@ -297,13 +300,17 @@ class OpenAIRealtimeAPIWrapper:
                             response_data.get('item_id'),
                             response_data.get('transcript'),
                         )
-                        if not user_message:
-                            user_message = dict(role = 'user', content = '')
-                            self._messages.append(user_message)
-                        if user_message['content'] is None:
-                            user_message['content'] = response_data['transcript']
-                        else:
-                            user_message['content'] += response_data['transcript']
+                        item_id = response_data.get('item_id')
+                        if item_id is not None:
+                            item = self._get_or_create_item(item_id, 'user')
+                            transcript = response_data.get('transcript')
+                            # Keep text append-only: only set from 'completed'
+                            # when no streaming deltas already populated it
+                            # (whisper-1 sends only 'completed'; other models
+                            # stream '.delta' then send the full 'completed').
+                            if transcript and not item['text']:
+                                item['text'] = transcript
+                            item['status'] = 'done'
 
                     elif response_data['type'] == 'input_audio_buffer.speech_started':
                         # User barged in. STOP PLAYBACK unconditionally: drop
@@ -350,17 +357,27 @@ class OpenAIRealtimeAPIWrapper:
                                 )
                             self._cancelled_response_id = \
                                 self._current_response_id
+                            # Mark the interrupted assistant row so the next
+                            # response starts a fresh row instead of appending.
+                            # The audio item id equals the assistant transcript
+                            # item id for the same output item.
+                            if self._current_item_id is not None and \
+                                    self._current_item_id in self._items:
+                                self._items[self._current_item_id]['status'] = \
+                                    'interrupted'
                             await websocket.send(json.dumps(dict(
                                 type = 'response.cancel'
                             )))
                         # Reset per-turn state so the next response (and any
                         # later barge-in) starts from a clean slate.
-                        message = None
                         self._current_item_id = None
                         self._played_samples = 0
-                        # Prepare container when user starts speaking to avoid overlap with AI transcript
-                        user_message = dict(role = 'user', content = None)
-                        self._messages.append(user_message)
+                        # Reserve the user's row now (before the assistant
+                        # replies) so its seq sorts ahead of the reply.
+                        # speech_started carries the user message's item_id.
+                        item_id = response_data.get('item_id')
+                        if item_id is not None:
+                            self._get_or_create_item(item_id, 'user')
 
                     elif response_data['type'] == 'response.function_call_arguments.done':
                         logger.info('Event: %s - %s', response_data['type'], response_data)
@@ -373,8 +390,7 @@ class OpenAIRealtimeAPIWrapper:
                         logger.debug('%s: %s', response_data['type'], response_data)
                         # No more deltas will arrive for this response (completed or
                         # cancelled/interrupted); the next response.output_audio_transcript.delta
-                        # must start a fresh message rather than append to a stale one.
-                        message = None
+                        # must start a fresh item rather than append to a stale one.
                         self._current_item_id = None
                         self._current_response_id = None
                         done_response_id = response_data.get('response', {}).get('id')
@@ -439,9 +455,13 @@ class OpenAIRealtimeAPIWrapper:
 
     @property
     def valid_messages(self) -> list[dict]:
-        """Get valid chat messages
+        """Get valid chat messages in creation (seq) order.
         """
-        return [m for m in self._messages if m['content'] is not None]
+        return [
+            dict(role = item['role'], content = item['text'])
+            for item in sorted(self._items.values(), key = lambda i: i['seq'])
+            if item['text']
+        ]
 
     def set_session_timeout(self, timeout: int | float):
         """Set session timeout duration
@@ -473,7 +493,8 @@ class OpenAIRealtimeAPIWrapper:
             raise RuntimeError('Already recording')
         self._recording = True
         self._ending = False
-        self._messages = []
+        self._items = {}
+        self._next_seq = 0
         # Clear per-turn tracking so a restarted wrapper can't truncate
         # against a previous session's item/playback position.
         self._current_item_id = None

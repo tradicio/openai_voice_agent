@@ -202,3 +202,99 @@ def test_get_or_create_item_assigns_incrementing_seq_once():
     assert first["seq"] == 0
     # Insertion order is creation order.
     assert list(wrapper._items.keys()) == ["item_A", "item_B"]
+
+
+async def test_user_row_created_before_assistant_reply():
+    wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
+    wrapper.reset_stream()
+    ws = FakeWebSocket([
+        {"type": "input_audio_buffer.speech_started", "item_id": "user_1"},
+        {"type": "response.output_audio_transcript.delta",
+         "item_id": "asst_1", "response_id": "resp_1", "delta": "Hi "},
+        {"type": "response.output_audio_transcript.delta",
+         "item_id": "asst_1", "response_id": "resp_1", "delta": "there"},
+        {"type": "response.output_audio_transcript.done",
+         "item_id": "asst_1", "transcript": "Hi there"},
+        {"type": "conversation.item.input_audio_transcription.completed",
+         "item_id": "user_1", "transcript": "Hello"},
+    ])
+
+    with pytest.raises(TerminateTaskGroup):
+        await wrapper.receive(ws)
+
+    user = wrapper._items["user_1"]
+    asst = wrapper._items["asst_1"]
+    # User row was reserved first, so it sorts ahead of the assistant reply.
+    assert user["seq"] < asst["seq"]
+    assert user["role"] == "user"
+    assert user["text"] == "Hello"
+    assert user["status"] == "done"
+    assert asst["role"] == "assistant"
+    assert asst["text"] == "Hi there"
+    assert asst["status"] == "done"
+
+
+async def test_input_transcription_delta_accumulates():
+    wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
+    wrapper.reset_stream()
+    ws = FakeWebSocket([
+        {"type": "input_audio_buffer.speech_started", "item_id": "user_1"},
+        {"type": "conversation.item.input_audio_transcription.delta",
+         "item_id": "user_1", "delta": "Hel"},
+        {"type": "conversation.item.input_audio_transcription.delta",
+         "item_id": "user_1", "delta": "lo"},
+        {"type": "conversation.item.input_audio_transcription.completed",
+         "item_id": "user_1", "transcript": "Hello"},
+    ])
+
+    with pytest.raises(TerminateTaskGroup):
+        await wrapper.receive(ws)
+
+    # Deltas already built the text; completed must not double it (append-only).
+    assert wrapper._items["user_1"]["text"] == "Hello"
+    assert wrapper._items["user_1"]["status"] == "done"
+
+
+async def test_barge_in_marks_prior_assistant_row_interrupted_and_starts_new_row():
+    wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
+    wrapper.reset_stream()
+    wrapper._current_item_id = "asst_1"  # audio item currently playing
+    ws = FakeWebSocket([
+        {"type": "response.output_audio_transcript.delta",
+         "item_id": "asst_1", "response_id": "resp_1", "delta": "Let me expl"},
+        {"type": "input_audio_buffer.speech_started", "item_id": "user_1"},
+        {"type": "response.output_audio_transcript.delta",
+         "item_id": "asst_2", "response_id": "resp_2", "delta": "New answer"},
+    ])
+
+    with pytest.raises(TerminateTaskGroup):
+        await wrapper.receive(ws)
+
+    assert wrapper._items["asst_1"]["status"] == "interrupted"
+    assert wrapper._items["asst_1"]["text"] == "Let me expl"
+    # A distinct row for the new response; not merged into asst_1.
+    assert "asst_2" in wrapper._items
+    assert wrapper._items["asst_2"]["text"] == "New answer"
+    assert wrapper._items["asst_1"]["seq"] != wrapper._items["asst_2"]["seq"]
+    # response.cancel was sent on barge-in.
+    assert any(m.get("type") == "response.cancel" for m in ws.sent)
+
+
+async def test_valid_messages_orders_by_seq_and_drops_empty():
+    wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
+    wrapper.reset_stream()
+    ws = FakeWebSocket([
+        {"type": "input_audio_buffer.speech_started", "item_id": "user_1"},
+        {"type": "response.output_audio_transcript.delta",
+         "item_id": "asst_1", "response_id": "resp_1", "delta": "Hi"},
+        {"type": "conversation.item.input_audio_transcription.completed",
+         "item_id": "user_1", "transcript": "Hello"},
+    ])
+
+    with pytest.raises(TerminateTaskGroup):
+        await wrapper.receive(ws)
+
+    assert wrapper.valid_messages == [
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi"},
+    ]
