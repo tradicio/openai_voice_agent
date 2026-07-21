@@ -81,6 +81,8 @@ class OpenAIRealtimeAPIWrapper:
         self._cancelled_response_id = None
         self._barge_in_event = asyncio.Event()
         self._played_samples = 0
+        self._current_item_id = None
+        self._current_content_index = 0
         self._resampler_for_api = av.audio.resampler.AudioResampler(
             format = FORMAT_MAPPING[API_SAMPLE_WIDTH],
             layout = LAYOUT_MAPPING[API_CHANNELS],
@@ -224,6 +226,13 @@ class OpenAIRealtimeAPIWrapper:
                             pass
                         # Queue audio data from server
                         elif (base64_audio := response_data['delta']):
+                            item_id = response_data.get('item_id')
+                            if item_id is not None and \
+                                    item_id != self._current_item_id:
+                                self._current_item_id = item_id
+                                self._current_content_index = \
+                                    response_data.get('content_index', 0)
+                                self._played_samples = 0
                             pcm_audio = base64.b64decode(base64_audio)
                             frame = pcm_audio_to_audio_frame(
                                 pcm_audio,
@@ -313,6 +322,7 @@ class OpenAIRealtimeAPIWrapper:
                         # cancelled/interrupted); the next response.output_audio_transcript.delta
                         # must start a fresh message rather than append to a stale one.
                         message = None
+                        self._current_item_id = None
                         done_response_id = response_data.get('response', {}).get('id')
                         if done_response_id and done_response_id == self._cancelled_response_id:
                             self._cancelled_response_id = None
