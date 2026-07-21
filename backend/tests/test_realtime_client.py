@@ -65,6 +65,20 @@ def test_read_play_audio_counts_samples():
     assert wrapper._played_samples == 480
 
 
+def test_reset_play_stream_drops_buffered_audio_on_barge_in():
+    # On barge-in the handler calls reset_stream(play_stream_only=True) to
+    # drop assistant audio still buffered but not yet sent to the client.
+    # If it no-ops, that backlog keeps streaming out and playback doesn't
+    # actually stop when the user interrupts.
+    wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
+    wrapper.reset_stream()
+    wrapper._play_stream.write(_client_frame(480))
+    assert wrapper._play_stream.samples == 480
+
+    wrapper.reset_stream(play_stream_only=True)
+    assert wrapper._play_stream.samples == 0
+
+
 async def test_audio_delta_tracks_item_and_resets_counter():
     wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
     wrapper.reset_stream()

@@ -329,6 +329,12 @@ class OpenAIRealtimeAPIWrapper:
                             await websocket.send(json.dumps(dict(type = 'response.cancel')))
                             message = None
                             self._barge_in_event.set()
+                            # Start the next turn from a clean slate: the play
+                            # FIFO was just emptied, so a later barge-in must
+                            # not truncate at a position that still counts this
+                            # (now-discarded) item's audio.
+                            self._current_item_id = None
+                            self._played_samples = 0
                         # Prepare container when user starts speaking to avoid overlap with AI transcript
                         user_message = dict(role = 'user', content = None)
                         self._messages.append(user_message)
@@ -444,6 +450,13 @@ class OpenAIRealtimeAPIWrapper:
         self._recording = True
         self._ending = False
         self._messages = []
+        # Clear per-turn tracking so a restarted wrapper can't truncate
+        # against a previous session's item/playback position.
+        self._current_item_id = None
+        self._current_content_index = 0
+        self._played_samples = 0
+        self._cancelled_response_id = None
+        self._current_response_id = None
         self.reset_stream()
 
     def stop(self):
@@ -485,15 +498,25 @@ class OpenAIRealtimeAPIWrapper:
 
     def reset_stream(self, play_stream_only: bool = False):
         """Reset audio data stream
+
+        With ``play_stream_only`` the play FIFO is force-recreated (emptied),
+        not merely created-if-missing. This is what a barge-in relies on to
+        drop assistant audio still buffered but not yet sent to the client;
+        a plain "create if missing" no-ops on the existing FIFO, letting that
+        backlog keep streaming out so playback doesn't actually stop.
         """
-        if not play_stream_only:
-            # Only create new FIFO if not already initialized with format/layout
-            if not hasattr(self, '_record_stream') or self._record_stream is None:
-                self._record_stream = av.audio.fifo.AudioFifo(
-                    format = FORMAT_MAPPING[API_SAMPLE_WIDTH],
-                    layout = LAYOUT_MAPPING[API_CHANNELS],
-                )
+        if play_stream_only:
+            self._play_stream = av.audio.fifo.AudioFifo(
+                format = FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
+                layout = LAYOUT_MAPPING[CLIENT_CHANNELS],
+            )
+            return
         # Only create new FIFO if not already initialized with format/layout
+        if not hasattr(self, '_record_stream') or self._record_stream is None:
+            self._record_stream = av.audio.fifo.AudioFifo(
+                format = FORMAT_MAPPING[API_SAMPLE_WIDTH],
+                layout = LAYOUT_MAPPING[API_CHANNELS],
+            )
         if not hasattr(self, '_play_stream') or self._play_stream is None:
             self._play_stream = av.audio.fifo.AudioFifo(
                 format = FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
