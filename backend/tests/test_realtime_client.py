@@ -89,3 +89,60 @@ async def test_audio_delta_tracks_item_and_resets_counter():
     assert wrapper._current_item_id == "item_B"
     assert wrapper._current_content_index == 0
     assert wrapper._played_samples == 0
+
+
+async def test_barge_in_sends_truncate_before_cancel():
+    wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
+    wrapper.reset_stream()
+    wrapper._current_item_id = "item_A"
+    wrapper._current_content_index = 0
+    wrapper._played_samples = 4800  # 100ms at 48kHz
+
+    ws = FakeWebSocket([
+        {
+            "type": "response.output_audio_transcript.delta",
+            "delta": "Hi",
+            "response_id": "resp_1",
+        },
+        {"type": "input_audio_buffer.speech_started"},
+    ])
+
+    with pytest.raises(TerminateTaskGroup):
+        await wrapper.receive(ws)
+
+    types = [m["type"] for m in ws.sent]
+    assert "conversation.item.truncate" in types
+    assert "response.cancel" in types
+    assert types.index("conversation.item.truncate") < types.index(
+        "response.cancel"
+    )
+    truncate = next(
+        m for m in ws.sent if m["type"] == "conversation.item.truncate"
+    )
+    assert truncate["item_id"] == "item_A"
+    assert truncate["content_index"] == 0
+    assert truncate["audio_end_ms"] == 100
+
+
+async def test_barge_in_without_playback_skips_truncate():
+    wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
+    wrapper.reset_stream()
+    wrapper._current_item_id = "item_A"
+    wrapper._current_content_index = 0
+    wrapper._played_samples = 0  # nothing heard yet
+
+    ws = FakeWebSocket([
+        {
+            "type": "response.output_audio_transcript.delta",
+            "delta": "Hi",
+            "response_id": "resp_1",
+        },
+        {"type": "input_audio_buffer.speech_started"},
+    ])
+
+    with pytest.raises(TerminateTaskGroup):
+        await wrapper.receive(ws)
+
+    types = [m["type"] for m in ws.sent]
+    assert "conversation.item.truncate" not in types
+    assert "response.cancel" in types

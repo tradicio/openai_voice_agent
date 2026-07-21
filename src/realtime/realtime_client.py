@@ -294,13 +294,37 @@ class OpenAIRealtimeAPIWrapper:
                             response_data['type']
                         )
                         if message is not None:
-                            # An assistant response was still in progress: cancel it
-                            # server-side, remember its response_id so any deltas for
-                            # it still in flight (sent before the server honored our
-                            # cancel) get dropped instead of starting a new message
-                            # *after* the user's interrupting turn, and tell the
-                            # WebSocket layer to flush whatever audio it already
-                            # handed the client (which keeps playing out otherwise).
+                            # An assistant response was still in progress.
+                            # First tell the server how much of the current
+                            # assistant item the user actually heard (the
+                            # audio already sent to the client), so its
+                            # conversation state doesn't keep audio that was
+                            # generated but cut off before playback. Then
+                            # cancel it server-side, remember its response_id
+                            # so any deltas still in flight get dropped
+                            # instead of starting a new message *after* the
+                            # user's interrupting turn, and tell the
+                            # WebSocket layer to flush whatever audio it
+                            # already handed the client.
+                            if self._current_item_id is not None and \
+                                    self._played_samples > 0:
+                                audio_end_ms = round(
+                                    self._played_samples
+                                    / CLIENT_SAMPLE_RATE * 1000
+                                )
+                                await websocket.send(json.dumps(dict(
+                                    type = 'conversation.item.truncate',
+                                    item_id = self._current_item_id,
+                                    content_index = (
+                                        self._current_content_index
+                                    ),
+                                    audio_end_ms = audio_end_ms,
+                                )))
+                                logger.debug(
+                                    'Truncated item %s at %dms on barge-in',
+                                    self._current_item_id,
+                                    audio_end_ms,
+                                )
                             self._cancelled_response_id = self._current_response_id
                             await websocket.send(json.dumps(dict(type = 'response.cancel')))
                             message = None
