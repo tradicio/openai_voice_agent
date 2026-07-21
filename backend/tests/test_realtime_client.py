@@ -79,6 +79,30 @@ def test_reset_play_stream_drops_buffered_audio_on_barge_in():
     assert wrapper._play_stream.samples == 0
 
 
+async def test_barge_in_stops_playback_during_audio_tail():
+    # Audio is still playing from the buffered backlog, but the assistant
+    # transcript stream has already ended (so the receive loop's local
+    # `message` is None) — the common case, since audio outlasts the
+    # transcript by seconds. A barge-in here must STILL stop playback:
+    # empty the buffered audio and signal clear_audio to the client.
+    wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
+    wrapper.reset_stream()
+    wrapper._current_item_id = "item_A"
+    wrapper._played_samples = 4800
+    wrapper._play_stream.write(_client_frame(9600))  # buffered, not yet sent
+
+    ws = FakeWebSocket([
+        {"type": "input_audio_buffer.speech_started"},
+    ])
+    with pytest.raises(TerminateTaskGroup):
+        await wrapper.receive(ws)
+
+    # The WS layer learns to send clear_audio via consume_barge_in().
+    assert wrapper.consume_barge_in() is True
+    # And the server-side backlog must be dropped so it can't keep streaming.
+    assert wrapper._play_stream.samples == 0
+
+
 async def test_audio_delta_tracks_item_and_resets_counter():
     wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
     wrapper.reset_stream()

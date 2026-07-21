@@ -311,16 +311,16 @@ class OpenAIRealtimeAPIWrapper:
                         self.reset_stream(play_stream_only = True)
                         self._barge_in_event.set()
                         logger.debug(
-                            'Event: %s - barge-in, stopping playback (item=%s)',
+                            'Event: %s - barge-in, stopping playback item=%s',
                             response_data['type'],
                             response_data.get('item_id'),
                         )
                         if self._current_response_id is not None:
-                            # A response is still active server-side. First tell
-                            # the server how much of the current assistant item
-                            # the user actually heard, so its conversation state
-                            # doesn't keep audio generated but cut off before
-                            # playback. Then cancel it and remember its
+                            # A response is still active server-side. First
+                            # tell the server how much of the current assistant
+                            # item the user actually heard, so its conversation
+                            # state doesn't keep audio generated but cut off
+                            # before playback. Then cancel it and remember its
                             # response_id so any deltas still in flight get
                             # dropped instead of refilling the buffer we just
                             # cleared.
