@@ -2,32 +2,34 @@
 
 import { useState } from 'react';
 
-export default function TimeoutSlider({
-  onchange,
-  disabled,
-}: {
-  onchange: (timeout: number) => void;
+interface TimeoutSliderProps {
+  onTimeoutChange: (timeout: number) => void;
   disabled: boolean;
-}) {
-  const [timeout, setTimeout] = useState(120);
+}
+
+export default function TimeoutSlider({
+  onTimeoutChange,
+  disabled,
+}: TimeoutSliderProps) {
+  const [sessionTimeout, setSessionTimeout] = useState(120);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = parseInt(e.target.value);
-    setTimeout(value);
-    onchange(value);
+    setSessionTimeout(value);
+    onTimeoutChange(value);
   };
 
   return (
     <div>
       <label className="block text-sm font-medium text-gray-700 mb-2">
-        Maximum conversation time: {timeout}s
+        Maximum conversation time: {sessionTimeout}s
       </label>
       <input
         type="range"
         min="60"
         max="300"
         step="10"
-        value={timeout}
+        value={sessionTimeout}
         onChange={handleChange}
         disabled={disabled}
         className="disabled:opacity-50"

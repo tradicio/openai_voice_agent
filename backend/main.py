@@ -1,17 +1,23 @@
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import router
-from api.websocket import websocket_endpoint
+# The backend imports the top-level `src` package (audio/realtime/prompts
+# utilities) that lives alongside this `backend` directory, so it must be
+# added to the path here, once, at the process entrypoint.
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from api.routes import router  # noqa: E402
+from api.websocket import websocket_endpoint  # noqa: E402
 
 # Load environment variables
 load_dotenv(".env", override=True)
-load_dotenv(".env.example")
 
 # Configure logging
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -34,17 +40,27 @@ async def lifespan(app: FastAPI):
 # Create FastAPI app
 app = FastAPI(
     title="OpenAI Realtime Voice Chat Backend",
-    description="FastAPI backend for real-time voice chat using OpenAI Realtime API",
+    description=(
+        "FastAPI backend for real-time voice chat using "
+        "OpenAI Realtime API"
+    ),
     version="0.1.0",
     lifespan=lifespan
 )
 
 # Add CORS middleware
 frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+if frontend_url == "*":
+    raise RuntimeError(
+        "FRONTEND_URL must not be a wildcard; set it to the exact "
+        "origin the frontend is served from."
+    )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[frontend_url, "http://localhost:8000"],
-    allow_credentials=True,
+    # No cookies/auth headers are used across origins, so credentials
+    # don't need to be allowed here.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

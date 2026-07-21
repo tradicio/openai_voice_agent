@@ -1,15 +1,25 @@
 const SAMPLE_RATE = 48000;
 const CHANNELS = 2;
 
+interface WindowWithWebkitAudio extends Window {
+  AudioContext?: typeof AudioContext;
+  webkitAudioContext?: typeof AudioContext;
+}
+
 export class AudioPlaybackManager {
   private audioContext: AudioContext | null = null;
   private nextPlayTime = 0;
   private activeSources: AudioBufferSourceNode[] = [];
 
   initialize() {
-    this.audioContext = new (window.AudioContext ||
-      (window as any).webkitAudioContext)();
-    this.nextPlayTime = this.audioContext.currentTime;
+    const win = window as WindowWithWebkitAudio;
+    const AudioContextClass = win.AudioContext || win.webkitAudioContext;
+    if (!AudioContextClass) {
+      throw new Error('Web Audio API is not supported in this browser');
+    }
+    const audioContext = new AudioContextClass();
+    this.audioContext = audioContext;
+    this.nextPlayTime = audioContext.currentTime;
   }
 
   /** Stop any audio already scheduled/playing (e.g. the user just barged in). */

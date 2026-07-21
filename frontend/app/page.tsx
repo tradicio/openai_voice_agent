@@ -10,12 +10,12 @@ import { useAudioStream } from '@/hooks/useAudioStream';
 export default function Home() {
   const [isRecording, setIsRecording] = useState(false);
   const [selectedPrompt, setSelectedPrompt] = useState('');
-  const [timeout, setTimeout] = useState(120);
+  const [sessionTimeout, setSessionTimeout] = useState(120);
 
   const { messages, status } = useAudioStream(
     isRecording,
     selectedPrompt,
-    timeout,
+    sessionTimeout,
   );
 
   const handleStartConversation = () => {
@@ -44,7 +44,7 @@ export default function Home() {
       />
 
       <TimeoutSlider
-        onchange={setTimeout}
+        onTimeoutChange={setSessionTimeout}
         disabled={isRecording}
       />
 

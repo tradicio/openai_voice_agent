@@ -1,3 +1,8 @@
+interface WindowWithWebkitAudio extends Window {
+  AudioContext?: typeof AudioContext;
+  webkitAudioContext?: typeof AudioContext;
+}
+
 export class AudioCaptureManager {
   private mediaStream: MediaStream | null = null;
   private audioContext: AudioContext | null = null;
@@ -16,13 +21,18 @@ export class AudioCaptureManager {
         },
       });
 
-      this.audioContext = new (window.AudioContext ||
-        (window as any).webkitAudioContext)();
+      const win = window as WindowWithWebkitAudio;
+      const AudioContextClass = win.AudioContext || win.webkitAudioContext;
+      if (!AudioContextClass) {
+        throw new Error('Web Audio API is not supported in this browser');
+      }
+      const audioContext = new AudioContextClass();
+      this.audioContext = audioContext;
 
-      const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+      const source = audioContext.createMediaStreamSource(this.mediaStream);
 
       // ScriptProcessor (deprecated but simpler for minimal implementation)
-      this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+      this.processor = audioContext.createScriptProcessor(4096, 1, 1);
 
       this.processor.onaudioprocess = (event) => {
         const inputData = event.inputBuffer.getChannelData(0);
@@ -30,7 +40,7 @@ export class AudioCaptureManager {
       };
 
       source.connect(this.processor);
-      this.processor.connect(this.audioContext.destination);
+      this.processor.connect(audioContext.destination);
     } catch (err) {
       console.error('Failed to initialize audio capture:', err);
       throw err;

@@ -6,10 +6,7 @@ export async function fetchPrompts() {
   return res.json();
 }
 
-export async function sendControlMessage(
-  ws: WebSocket,
-  action: 'start' | 'stop',
-) {
+export function sendControlMessage(ws: WebSocket, action: 'start' | 'stop') {
   ws.send(
     JSON.stringify({
       type: 'control',
@@ -18,7 +15,7 @@ export async function sendControlMessage(
   );
 }
 
-export async function sendConfigMessage(
+export function sendConfigMessage(
   ws: WebSocket,
   config: { timeout?: number; prompt_key?: string },
 ) {
