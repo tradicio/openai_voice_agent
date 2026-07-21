@@ -537,7 +537,10 @@ class OpenAIRealtimeAPIWrapper:
         """
         item = self._items.get(item_id)
         if item is None:
-            item = dict(role = role, text = '', seq = self._next_seq, status = 'in_progress')
+            item = dict(
+                role = role, text = '', seq = self._next_seq,
+                status = 'in_progress',
+            )
             self._items[item_id] = item
             self._next_seq += 1
         return item
