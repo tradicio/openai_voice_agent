@@ -3,7 +3,7 @@
 interface Message {
   role: 'user' | 'assistant';
   text: string;
-  index: number;
+  seq: number;
 }
 
 export default function TranscriptDisplay({
@@ -17,7 +17,7 @@ export default function TranscriptDisplay({
         <p className="text-gray-500 text-sm">No messages yet...</p>
       ) : (
         messages.map((msg) => (
-          <div key={msg.index} className={`message ${msg.role}`}>
+          <div key={msg.seq} className={`message ${msg.role}`}>
             <strong>{msg.role === 'user' ? 'You:' : 'Assistant:'}</strong>{' '}
             {msg.text}
           </div>

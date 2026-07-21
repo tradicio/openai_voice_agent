@@ -8,7 +8,7 @@ import { createWebSocketURL, sendControlMessage, sendConfigMessage } from '@/lib
 interface Message {
   role: 'user' | 'assistant';
   text: string;
-  index: number;
+  seq: number;
 }
 
 interface RawMessage {
@@ -56,77 +56,40 @@ export function useAudioStream(
   const wsRef = useRef<WebSocket | null>(null);
   const audioCaptureRef = useRef<AudioCaptureManager | null>(null);
   const audioPlaybackRef = useRef<AudioPlaybackManager | null>(null);
-  // Raw per-backend-index transcript content, keyed by the stable index the
-  // backend assigned when the underlying message was created. The user's own
-  // transcript (via Whisper) commonly arrives well after the assistant's
-  // reply to it has already started streaming in, so messages do NOT arrive
-  // over the WebSocket in index order. We keep the untouched raw content here
-  // and re-derive the displayed bubbles from it, sorted by index.
+  // Raw transcript content keyed by the backend-assigned `seq` — a stable,
+  // monotonically increasing id assigned when the underlying conversation
+  // item was first created. `seq` is BOTH the row identity and the sort
+  // order: the user's Whisper transcript often arrives after the assistant
+  // has already started replying, so messages do NOT arrive in seq order.
   const rawMessagesRef = useRef<Map<number, RawMessage>>(new Map());
-  // Indices seen so far, kept sorted incrementally (see insertSorted) so
-  // re-deriving the bubble list never needs a fresh O(n log n) sort.
-  const orderedIndicesRef = useRef<number[]>([]);
-  // Merged, displayed bubbles from the last full rebuild, and which bubble
-  // each raw index currently contributes to — lets a delta on an
-  // already-known index update its bubble's text in O(1) instead of
-  // re-merging every message on every incoming token.
-  const mergedRef = useRef<Message[]>([]);
-  const indexToBubblePosRef = useRef<Map<number, number>>(new Map());
-
-  const rebuildMerged = (): Message[] => {
-    const merged: Message[] = [];
-    const indexToBubblePos = new Map<number, number>();
-    for (const index of orderedIndicesRef.current) {
-      const msg = rawMessagesRef.current.get(index);
-      if (!msg || !msg.text) continue;
-      const last = merged[merged.length - 1];
-      if (last && last.role === msg.role) {
-        last.text += msg.text;
-      } else {
-        merged.push({ role: msg.role, text: msg.text, index });
-      }
-      indexToBubblePos.set(index, merged.length - 1);
-    }
-    mergedRef.current = merged;
-    indexToBubblePosRef.current = indexToBubblePos;
-    return merged;
-  };
+  // Seqs seen so far, kept sorted incrementally (see insertSorted) so
+  // re-deriving the row list never needs a fresh O(n log n) sort.
+  const orderedSeqsRef = useRef<number[]>([]);
 
   const applyTranscriptDelta = (
-    index: number,
+    seq: number,
     role: 'user' | 'assistant',
     delta: string,
   ): Message[] => {
-    const existing = rawMessagesRef.current.get(index);
-    const isNewIndex = !existing;
-    rawMessagesRef.current.set(index, {
+    const existing = rawMessagesRef.current.get(seq);
+    rawMessagesRef.current.set(seq, {
       role,
       text: (existing?.text ?? '') + delta,
     });
-
-    if (isNewIndex) {
-      insertSorted(orderedIndicesRef.current, index);
-      return rebuildMerged();
+    if (!existing) {
+      insertSorted(orderedSeqsRef.current, seq);
     }
-
-    const bubblePos = indexToBubblePosRef.current.get(index);
-    const bubble = bubblePos !== undefined ? mergedRef.current[bubblePos] : undefined;
-    if (!bubble) {
-      // Shouldn't normally happen (every known index gets a bubble on
-      // insertion), but fall back to a full rebuild rather than drop data.
-      return rebuildMerged();
-    }
-    mergedRef.current = mergedRef.current.map((b, i) =>
-      i === bubblePos ? { ...b, text: b.text + delta } : b,
-    );
-    return mergedRef.current;
+    // One row per seq, in seq order. No merging of consecutive same-role
+    // turns: a finished or interrupted turn always yields a new seq next.
+    return orderedSeqsRef.current.map((s) => {
+      const msg = rawMessagesRef.current.get(s)!;
+      return { role: msg.role, text: msg.text, seq: s };
+    });
   };
 
   const resetTranscript = () => {
     rawMessagesRef.current = new Map();
-    orderedIndicesRef.current = [];
-    mergedRef.current = [];
-    indexToBubblePosRef.current = new Map();
+    orderedSeqsRef.current = [];
   };
 
   useEffect(() => {
@@ -177,7 +140,7 @@ export function useAudioStream(
           setStatus(message.message);
         } else if (message.type === 'transcript') {
           setMessages(
-            applyTranscriptDelta(message.index, message.role, message.delta),
+            applyTranscriptDelta(message.seq, message.role, message.delta),
           );
         } else if (message.type === 'audio') {
           audioPlaybackRef.current?.playChunk(message.data);
