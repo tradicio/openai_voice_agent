@@ -80,6 +80,7 @@ class OpenAIRealtimeAPIWrapper:
         self._current_response_id = None
         self._cancelled_response_id = None
         self._barge_in_event = asyncio.Event()
+        self._played_samples = 0
         self._resampler_for_api = av.audio.resampler.AudioResampler(
             format = FORMAT_MAPPING[API_SAMPLE_WIDTH],
             layout = LAYOUT_MAPPING[API_CHANNELS],
@@ -111,7 +112,7 @@ class OpenAIRealtimeAPIWrapper:
             self._record_stream.write(blank_frame)
         self._record_stream.write(frame)
 
-        new_frame = self._play_stream.read(frame.samples, partial = True)
+        new_frame = self.read_play_audio(frame.samples, partial=True)
         if new_frame:
             assert new_frame.format.name == frame.format.name
             assert new_frame.layout.name == frame.layout.name
@@ -366,10 +367,6 @@ class OpenAIRealtimeAPIWrapper:
         logger.info('Recording stopped')
         raise TerminateTaskGroup('status_checker')
 
-    def write_messages(self):
-        """Removed—messages now returned via API/WebSocket"""
-        pass
-
     @property
     def recording(self) -> bool:
         """Get recording status of audio data
@@ -431,6 +428,26 @@ class OpenAIRealtimeAPIWrapper:
             self._barge_in_event.clear()
             return True
         return False
+
+    def read_play_audio(self, nsamples: int, partial: bool = True):
+        """Drain playback audio, counting what has been sent to the client.
+
+        Wraps ``_play_stream.read`` so the amount of assistant audio handed
+        off toward the client is tracked in one place. The running total
+        (``_played_samples``) is what barge-in truncation uses to tell the
+        server how much of the current assistant item the user heard.
+
+        Args:
+            nsamples (int): Number of samples to read from the play FIFO.
+            partial (bool): Whether a partial (< nsamples) read is
+                allowed.
+        Returns:
+            av.AudioFrame | None: The drained frame, or None if empty.
+        """
+        frame = self._play_stream.read(nsamples, partial=partial)
+        if frame:
+            self._played_samples += frame.samples
+        return frame
 
     def reset_stream(self, play_stream_only: bool = False):
         """Reset audio data stream

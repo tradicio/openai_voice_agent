@@ -211,7 +211,7 @@ class AudioStreamSession:
                     await self.websocket.send_text(
                         json.dumps({"type": "clear_audio"})
                     )
-                frame = self.api_wrapper._play_stream.read(
+                frame = self.api_wrapper.read_play_audio(
                     AUDIO_CHUNK_SIZE, partial=True
                 )
                 if frame:
