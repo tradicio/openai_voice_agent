@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Run backend tests from the **repo root** (pyproject: `testpaths = ["backend/tests"]`, `pythonpath = ["backend"]`) with the project's Python **3.11+** interpreter (the code uses `except*`, invalid on 3.10). Command: `python -m pytest -q`.
-- **Coordination:** this branch (`feat/barge-in-truncation`) has in-flight uncommitted work in `src/realtime/realtime_client.py` that added `_current_item_id`, `_current_content_index`, and per-item `_played_samples` reset for audio truncation. **Do not remove or repurpose those.** This plan adds a *separate* `_active_assistant_item_id` flag and a separate `_items` dict so the two features do not collide. All line numbers below refer to the current working-tree state.
+- **Coordination:** this branch (`feat/barge-in-truncation`) has **committed** barge-in-truncation work (`3e06d8b`, `a66572d`) in `src/realtime/realtime_client.py`: `__init__` fields `_current_item_id`/`_current_content_index`/`_played_samples`, the audio-item tracking in the `response.output_audio.delta` branch, and a **`conversation.item.truncate` block inside the `input_audio_buffer.speech_started` branch** (currently lines 309-327). **Do not remove or repurpose any of it** — Task 3 rewrites `speech_started` but MUST keep the truncate block intact. This plan adds a *separate* `_active_assistant_item_id` flag and a separate `_items` dict so the two features do not collide. Two existing truncation tests (`test_barge_in_sends_truncate_before_cancel`, `test_barge_in_without_playback_skips_truncate` in `backend/tests/test_realtime_client.py`) script a transcript delta **without** an `item_id`; because the new barge-in guard keys on `_active_assistant_item_id` (set only when a transcript delta carries an `item_id`), Task 3 updates those two tests to add `"item_id": "item_A"` to their delta so they keep passing. All line numbers below refer to the current committed state (`a66572d`).
 - Transcript text stored per item MUST stay append-only (monotonically growing). The monitor forwards deltas by character-length diff (`text[prev_len:]`); replacing or shrinking a stored string would corrupt forwarding.
 - Keep NumPy/Sphinx-style docstrings and the existing code style (spaces around `=` in call kwargs is the house style in `realtime_client.py`; `websocket.py` uses standard PEP8 — match each file's local style).
 
@@ -303,6 +303,27 @@ async def test_valid_messages_orders_by_seq_and_drops_empty():
     ]
 ```
 
+Also update the **two existing truncation tests** so their transcript delta carries an `item_id` (the new barge-in guard keys on `_active_assistant_item_id`, which is set only when a transcript delta has an `item_id`). In both `test_barge_in_sends_truncate_before_cancel` (~line 101) and `test_barge_in_without_playback_skips_truncate` (~line 134), change the scripted delta from:
+
+```python
+        {
+            "type": "response.output_audio_transcript.delta",
+            "delta": "Hi",
+            "response_id": "resp_1",
+        },
+```
+
+to (add the `item_id`, matching the `_current_item_id = "item_A"` these tests set):
+
+```python
+        {
+            "type": "response.output_audio_transcript.delta",
+            "delta": "Hi",
+            "response_id": "resp_1",
+            "item_id": "item_A",
+        },
+```
+
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest backend/tests/test_realtime_client.py -k "user_row or input_transcription_delta or barge_in_marks or valid_messages_orders" -v`
@@ -378,7 +399,7 @@ Replace the input-transcription `delta` (added in Task 1) and `completed` branch
                             item['status'] = 'done'
 ```
 
-Replace the `input_audio_buffer.speech_started` branch (~lines 289-310) with:
+Replace the `input_audio_buffer.speech_started` branch (currently lines 289-334) with the following. **This preserves the committed truncate block verbatim** — only the guard (`message is not None` → `self._active_assistant_item_id is not None`), the `message = None` line (→ mark-interrupted + clear the flag), and the user-row reservation change:
 
 ```python
                     elif response_data['type'] == 'input_audio_buffer.speech_started':
@@ -390,11 +411,37 @@ Replace the `input_audio_buffer.speech_started` branch (~lines 289-310) with:
                             response_data.get('item_id'),
                         )
                         if self._active_assistant_item_id is not None:
-                            # An assistant response was still streaming: cancel it
-                            # server-side, remember its response_id so any in-flight
-                            # deltas get dropped instead of creating a row *after*
-                            # the user's interrupting turn, mark its row interrupted,
-                            # and tell the WebSocket layer to flush already-sent audio.
+                            # An assistant response was still in progress.
+                            # First tell the server how much of the current
+                            # assistant item the user actually heard (the
+                            # audio already sent to the client), so its
+                            # conversation state doesn't keep audio that was
+                            # generated but cut off before playback. Then
+                            # cancel it server-side, remember its response_id
+                            # so any deltas still in flight get dropped
+                            # instead of starting a new message *after* the
+                            # user's interrupting turn, mark its row
+                            # interrupted, and tell the WebSocket layer to
+                            # flush whatever audio it already handed the client.
+                            if self._current_item_id is not None and \
+                                    self._played_samples > 0:
+                                audio_end_ms = round(
+                                    self._played_samples
+                                    / CLIENT_SAMPLE_RATE * 1000
+                                )
+                                await websocket.send(json.dumps(dict(
+                                    type = 'conversation.item.truncate',
+                                    item_id = self._current_item_id,
+                                    content_index = (
+                                        self._current_content_index
+                                    ),
+                                    audio_end_ms = audio_end_ms,
+                                )))
+                                logger.debug(
+                                    'Truncated item %s at %dms on barge-in',
+                                    self._current_item_id,
+                                    audio_end_ms,
+                                )
                             self._cancelled_response_id = self._current_response_id
                             if self._active_assistant_item_id in self._items:
                                 self._items[self._active_assistant_item_id]['status'] = 'interrupted'
@@ -409,7 +456,7 @@ Replace the `input_audio_buffer.speech_started` branch (~lines 289-310) with:
                             self._get_or_create_item(item_id, 'user')
 ```
 
-In the `response.done` branch, immediately after the existing `self._current_item_id = None` line (~line 325) add:
+In the `response.done` branch, immediately after the existing `self._current_item_id = None` line (currently line 349) add:
 
 ```python
                         self._active_assistant_item_id = None
@@ -417,7 +464,7 @@ In the `response.done` branch, immediately after the existing `self._current_ite
 
 - [ ] **Step 4: Update `valid_messages`, `start()`, and the class annotation**
 
-Replace `valid_messages` (~lines 387-390) with:
+Replace `valid_messages` (currently lines 411-414) with:
 
 ```python
     @property
@@ -431,7 +478,7 @@ Replace `valid_messages` (~lines 387-390) with:
         ]
 ```
 
-In `start()` replace `self._messages = []` (~line 422) with:
+In `start()` replace `self._messages = []` (currently line 446) with:
 
 ```python
         self._items = {}
@@ -447,7 +494,7 @@ Expected: no output.
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `python -m pytest backend/tests/test_realtime_client.py -v`
-Expected: PASS (all, including the pre-existing `test_read_play_audio_counts_samples` and `test_audio_delta_tracks_item_and_resets_counter`).
+Expected: PASS (all, including the pre-existing `test_read_play_audio_counts_samples`, `test_audio_delta_tracks_item_and_resets_counter`, and the two truncation tests `test_barge_in_sends_truncate_before_cancel` / `test_barge_in_without_playback_skips_truncate` — the truncate block and its ordering before `response.cancel` must still hold).
 
 - [ ] **Step 6: Commit**
 
@@ -751,6 +798,6 @@ Expected: no new errors introduced by this change.
 
 - **Spec coverage:** Phase-0 diagnosis → Task 1. Backend data model (`_items`/`_next_seq`/`status`, item helper) → Task 2. Event handling (speech_started user row, input `.delta`+`.completed`, assistant delta/done, interruption) → Task 3. `valid_messages` redefinition → Task 3 Step 4. Monitor `seq` forwarding + `item_id` key → Task 4. Frontend seq-keyed no-merge rows + `TranscriptDisplay` key → Task 5. Minimal UI (no streaming indicator) and no frontend test tooling → honored (Task 5 uses manual verification). Out-of-scope items excluded.
 - **Append-only invariant:** enforced in Task 3 (`completed` sets text only when empty) so the monitor's length-diff forwarding (Task 4) stays correct.
-- **Parallel-work isolation:** uses a new `_active_assistant_item_id` flag rather than the truncation feature's `_current_item_id`; the audio-delta truncation branch is left untouched.
+- **Parallel-work isolation (truncation, committed `a66572d`):** uses a new `_active_assistant_item_id` flag rather than the truncation feature's `_current_item_id`; the `response.output_audio.delta` audio-tracking branch is left untouched; the `conversation.item.truncate` block inside `speech_started` is preserved verbatim (only its guard/cleanup lines change); the two existing truncation tests are updated to add an `item_id` to their transcript delta so the new guard fires. Truncation still sends `conversation.item.truncate` before `response.cancel` on barge-in.
 - **Type consistency:** `_get_or_create_item(item_id, role) -> dict` with keys `role/text/seq/status` used identically in Tasks 3-4; `last_transcript_lengths` retyped to `dict[str, int]`; frontend `Message` gains `seq` and drops `index` in both files; client message shape `{type, role, seq, delta}` produced in Task 4 and consumed in Task 5.
 ```
