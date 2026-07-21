@@ -2,7 +2,7 @@ from src.realtime.tools import TOOL_DEFINITIONS
 
 
 # Configuration for calling Realtime API
-REALTIME_API_URL = "wss://api.openai.com/v1/realtime?model=gpt-realtime"
+REALTIME_API_URL = "wss://api.openai.com/v1/realtime?model=gpt-realtime-2"
 REALTIME_API_HEADERS = {}
 REALTIME_API_CONFIG = dict(
     type = 'realtime',
@@ -11,7 +11,7 @@ REALTIME_API_CONFIG = dict(
         input = dict(
             format = dict(type = 'audio/pcm', rate = 24000),
             transcription = dict(
-                model = 'whisper-1',
+                model = 'gpt-4o-transcribe',
             ),
             turn_detection = dict(
                 type = 'server_vad',
