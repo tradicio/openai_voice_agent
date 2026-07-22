@@ -3,23 +3,10 @@ import base64
 import asyncio
 import datetime
 
-import av
 import websockets
 
-from src.audio.codec import (
-    audio_frame_to_pcm_audio,
-    pcm_audio_to_audio_frame,
-)
-from src.audio.formats import (
-    API_SAMPLE_RATE,
-    API_SAMPLE_WIDTH,
-    API_CHANNELS,
-    CLIENT_SAMPLE_RATE,
-    CLIENT_SAMPLE_WIDTH,
-    CLIENT_CHANNELS,
-    FORMAT_MAPPING,
-    LAYOUT_MAPPING,
-)
+from src.audio.formats import CLIENT_SAMPLE_RATE
+from src.audio.pipeline import AudioPipeline
 from src.prompts import DEFAULT_INSTRUCTIONS
 from src.realtime.config import (
     REALTIME_API_URL,
@@ -51,10 +38,6 @@ class OpenAIRealtimeAPIWrapper:
     _instructions: str
     _ending: bool
     _recording: bool
-    _resampler_for_api: av.audio.resampler.AudioResampler
-    _resampler_for_client: av.audio.resampler.AudioResampler
-    _record_stream: av.audio.fifo.AudioFifo
-    _play_stream: av.audio.fifo.AudioFifo
 
     def __init__(
         self,
@@ -82,19 +65,9 @@ class OpenAIRealtimeAPIWrapper:
         self._current_response_id = None
         self._cancelled_response_id = None
         self._barge_in_event = asyncio.Event()
-        self._played_samples = 0
         self._current_item_id = None
         self._current_content_index = 0
-        self._resampler_for_api = av.audio.resampler.AudioResampler(
-            format = FORMAT_MAPPING[API_SAMPLE_WIDTH],
-            layout = LAYOUT_MAPPING[API_CHANNELS],
-            rate = API_SAMPLE_RATE
-        )
-        self._resampler_for_client = av.audio.resampler.AudioResampler(
-            format = FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
-            layout = LAYOUT_MAPPING[CLIENT_CHANNELS],
-            rate = CLIENT_SAMPLE_RATE
-        )
+        self._audio = AudioPipeline()
 
     async def run(self):
         """Start connection with OpenAI Realtime API and handle audio data transmission
@@ -148,14 +121,10 @@ class OpenAIRealtimeAPIWrapper:
         """
         while True:
             try:
-                frame = self._record_stream.read()
-                if not frame:
+                pcm_audio = self._audio.next_api_pcm()
+                if pcm_audio is None:
                     await asyncio.sleep(self._send_interval)
                     continue
-                frame, *_rest = self._resampler_for_api.resample(frame)
-                assert not _rest
-
-                pcm_audio = audio_frame_to_pcm_audio(frame)
                 base64_audio = base64.b64encode(pcm_audio).decode('utf-8')
 
                 await websocket.send(json.dumps(dict(
@@ -193,23 +162,14 @@ class OpenAIRealtimeAPIWrapper:
                                 self._current_item_id = item_id
                                 self._current_content_index = \
                                     response_data.get('content_index', 0)
-                                self._played_samples = 0
+                                self._audio.reset_played()
                             # Mark the response active so a barge-in can cancel
                             # it before any transcript delta arrives (audio
                             # leads the transcript).
                             self._current_response_id = \
                                 response_data.get('response_id')
                             pcm_audio = base64.b64decode(base64_audio)
-                            frame = pcm_audio_to_audio_frame(
-                                pcm_audio,
-                                format = FORMAT_MAPPING[API_SAMPLE_WIDTH],
-                                layout = LAYOUT_MAPPING[API_CHANNELS],
-                                sample_rate = API_SAMPLE_RATE
-                            )
-                            resampled_frame, *_rest = \
-                                    self._resampler_for_client.resample(frame)
-                            assert not _rest
-                            self._play_stream.write(resampled_frame)
+                            self._audio.write_api_pcm(pcm_audio)
                             logger.debug(
                                 'Event: %s - received audio from OpenAI (%d bytes)',
                                 response_data['type'],
@@ -282,7 +242,7 @@ class OpenAIRealtimeAPIWrapper:
                         # plays from the backlog for seconds after the
                         # transcript ends, so this must not depend on
                         # transcript state — the tail must still be stopped.
-                        self.reset_stream(play_stream_only = True)
+                        self._audio.reset_play()
                         self._barge_in_event.set()
                         logger.debug(
                             'Event: %s - barge-in, stopping playback item=%s',
@@ -295,9 +255,9 @@ class OpenAIRealtimeAPIWrapper:
                             # state matches), then cancel it and remember the
                             # id so in-flight deltas get dropped, not replayed.
                             if self._current_item_id is not None and \
-                                    self._played_samples > 0:
+                                    self._audio.played_samples > 0:
                                 audio_end_ms = round(
-                                    self._played_samples
+                                    self._audio.played_samples
                                     / CLIENT_SAMPLE_RATE * 1000
                                 )
                                 await websocket.send(json.dumps(dict(
@@ -326,7 +286,7 @@ class OpenAIRealtimeAPIWrapper:
                             )))
                         # Reset per-turn state for the next response.
                         self._current_item_id = None
-                        self._played_samples = 0
+                        self._audio.reset_played()
                         # Reserve the user's row now so its seq sorts ahead of
                         # the reply (speech_started carries the user item_id).
                         item_id = response_data.get('item_id')
@@ -351,7 +311,7 @@ class OpenAIRealtimeAPIWrapper:
                         if done_response_id and done_response_id == self._cancelled_response_id:
                             self._cancelled_response_id = None
                         if self._ending:
-                            remaining_seconds = self._play_stream.samples / CLIENT_SAMPLE_RATE
+                            remaining_seconds = self._audio.play_buffer_seconds()
                             logger.info(
                                 'Waiting %.2fs for the goodbye message to finish playing',
                                 remaining_seconds
@@ -440,10 +400,10 @@ class OpenAIRealtimeAPIWrapper:
         # previous session's item/playback position.
         self._current_item_id = None
         self._current_content_index = 0
-        self._played_samples = 0
         self._cancelled_response_id = None
         self._current_response_id = None
-        self.reset_stream()
+        self._audio.reset()
+        self._audio.reset_played()
 
     def stop(self):
         """Stop operation
@@ -465,44 +425,10 @@ class OpenAIRealtimeAPIWrapper:
         """Return (item_id, row) pairs in creation order for the client."""
         return self._transcript.snapshot()
 
-    def read_play_audio(self, nsamples: int, partial: bool = True):
-        """Drain playback audio, counting what has been sent to the client.
+    def write_client_pcm(self, pcm_bytes: bytes) -> None:
+        """Enqueue client audio (base64-decoded PCM) for uplink to the API."""
+        self._audio.write_client_pcm(pcm_bytes)
 
-        The running total (``_played_samples``) is what barge-in truncation
-        uses to tell the server how much of the current item the user heard.
-
-        Args:
-            nsamples (int): Number of samples to read from the play FIFO.
-            partial (bool): Whether a partial (< nsamples) read is
-                allowed.
-        Returns:
-            av.AudioFrame | None: The drained frame, or None if empty.
-        """
-        frame = self._play_stream.read(nsamples, partial=partial)
-        if frame:
-            self._played_samples += frame.samples
-        return frame
-
-    def reset_stream(self, play_stream_only: bool = False):
-        """Reset audio data stream
-
-        With ``play_stream_only`` the play FIFO is force-recreated (emptied)
-        rather than created-if-missing, so a barge-in actually drops the
-        buffered assistant audio instead of letting it keep streaming out.
-        """
-        if play_stream_only:
-            self._play_stream = av.audio.fifo.AudioFifo(
-                format = FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
-                layout = LAYOUT_MAPPING[CLIENT_CHANNELS],
-            )
-            return
-        if not hasattr(self, '_record_stream') or self._record_stream is None:
-            self._record_stream = av.audio.fifo.AudioFifo(
-                format = FORMAT_MAPPING[API_SAMPLE_WIDTH],
-                layout = LAYOUT_MAPPING[API_CHANNELS],
-            )
-        if not hasattr(self, '_play_stream') or self._play_stream is None:
-            self._play_stream = av.audio.fifo.AudioFifo(
-                format = FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
-                layout = LAYOUT_MAPPING[CLIENT_CHANNELS],
-            )
+    def read_client_pcm(self, nsamples: int, partial: bool = True) -> bytes | None:
+        """Drain playback audio as PCM bytes for the client; None if empty."""
+        return self._audio.read_client_pcm(nsamples, partial=partial)

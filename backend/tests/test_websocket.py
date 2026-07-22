@@ -1,23 +1,11 @@
 import asyncio
 import json
 
-import av
 import pytest
 from api import websocket as ws_module
 from fastapi.testclient import TestClient
 from main import app
 from starlette.websockets import WebSocketDisconnect
-
-from src.audio.formats import (
-    API_CHANNELS,
-    API_SAMPLE_RATE,
-    API_SAMPLE_WIDTH,
-    CLIENT_CHANNELS,
-    CLIENT_SAMPLE_RATE,
-    CLIENT_SAMPLE_WIDTH,
-    FORMAT_MAPPING,
-    LAYOUT_MAPPING,
-)
 
 client = TestClient(app)
 ORIGIN_HEADERS = {"origin": "http://localhost:3000"}
@@ -26,8 +14,8 @@ ORIGIN_HEADERS = {"origin": "http://localhost:3000"}
 class FakeAPIWrapper:
     """A network-free stand-in for OpenAIRealtimeAPIWrapper.
 
-    Mirrors just the surface AudioStreamSession relies on so tests can
-    exercise the WebSocket message-handling/session lifecycle without
+    Mirrors just the public surface AudioStreamSession relies on so tests
+    can exercise the WebSocket message-handling/session lifecycle without
     opening a real connection to the OpenAI Realtime API.
     """
 
@@ -35,19 +23,6 @@ class FakeAPIWrapper:
         self.api_key = api_key
         self.recording = False
         self._transcript_items: list[tuple[str, dict]] = []
-        self._played_samples = 0
-        self._resampler_for_api = av.audio.resampler.AudioResampler(
-            format=FORMAT_MAPPING[API_SAMPLE_WIDTH],
-            layout=LAYOUT_MAPPING[API_CHANNELS],
-            rate=API_SAMPLE_RATE,
-        )
-        self._resampler_for_client = av.audio.resampler.AudioResampler(
-            format=FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
-            layout=LAYOUT_MAPPING[CLIENT_CHANNELS],
-            rate=CLIENT_SAMPLE_RATE,
-        )
-        self._record_stream = None
-        self._play_stream = None
 
     async def run(self):
         self.recording = True
@@ -60,14 +35,14 @@ class FakeAPIWrapper:
     def consume_barge_in(self) -> bool:
         return False
 
+    def write_client_pcm(self, pcm_bytes):
+        pass
+
+    def read_client_pcm(self, nsamples, partial=True):
+        return None
+
     def transcript_snapshot(self):
         return list(self._transcript_items)
-
-    def read_play_audio(self, nsamples, partial=True):
-        frame = self._play_stream.read(nsamples, partial=partial)
-        if frame:
-            self._played_samples += frame.samples
-        return frame
 
     def set_session_timeout(self, timeout):
         self.session_timeout = timeout

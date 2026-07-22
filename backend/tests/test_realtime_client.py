@@ -3,15 +3,9 @@ import json
 
 import pytest
 
-from src.audio.codec import pcm_audio_to_audio_frame
 from src.audio.formats import (
     API_CHANNELS,
     API_SAMPLE_WIDTH,
-    CLIENT_CHANNELS,
-    CLIENT_SAMPLE_RATE,
-    CLIENT_SAMPLE_WIDTH,
-    FORMAT_MAPPING,
-    LAYOUT_MAPPING,
 )
 from src.realtime.realtime_client import (
     OpenAIRealtimeAPIWrapper,
@@ -45,48 +39,14 @@ class FakeWebSocket:
         self.sent.append(json.loads(data))
 
 
-def _client_frame(nsamples: int):
-    """Build `nsamples` of silent client-format (48kHz stereo s16) audio."""
-    pcm = b"\x00" * (nsamples * CLIENT_SAMPLE_WIDTH * CLIENT_CHANNELS)
-    return pcm_audio_to_audio_frame(
-        pcm,
-        format=FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
-        layout=LAYOUT_MAPPING[CLIENT_CHANNELS],
-        sample_rate=CLIENT_SAMPLE_RATE,
-    )
-
-
-def test_read_play_audio_counts_samples():
-    wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
-    wrapper.reset_stream()
-    wrapper._play_stream.write(_client_frame(480))
-
-    assert wrapper._played_samples == 0
-    out = wrapper.read_play_audio(480, partial=True)
-    assert out is not None
-    assert wrapper._played_samples == 480
-
-
-def test_reset_play_stream_drops_buffered_audio_on_barge_in():
-    # On barge-in, reset_stream(play_stream_only=True) must drop buffered
-    # assistant audio; if it no-ops, playback won't stop on interrupt.
-    wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
-    wrapper.reset_stream()
-    wrapper._play_stream.write(_client_frame(480))
-    assert wrapper._play_stream.samples == 480
-
-    wrapper.reset_stream(play_stream_only=True)
-    assert wrapper._play_stream.samples == 0
-
-
 async def test_barge_in_stops_playback_during_audio_tail():
     # Audio outlasts the transcript by seconds, so a barge-in during the
     # audio tail must still stop playback and signal clear_audio.
     wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
-    wrapper.reset_stream()
+    wrapper._audio.reset()
     wrapper._current_item_id = "item_A"
-    wrapper._played_samples = 4800
-    wrapper._play_stream.write(_client_frame(9600))  # buffered, not yet sent
+    wrapper._audio.played_samples = 4800
+    wrapper._audio.write_api_pcm(b"\x00" * (240 * 2 * 1))  # buffered, not yet sent
 
     ws = FakeWebSocket([
         {"type": "input_audio_buffer.speech_started"},
@@ -97,13 +57,13 @@ async def test_barge_in_stops_playback_during_audio_tail():
     # The WS layer learns to send clear_audio via consume_barge_in().
     assert wrapper.consume_barge_in() is True
     # And the server-side backlog must be dropped so it can't keep streaming.
-    assert wrapper._play_stream.samples == 0
+    assert wrapper._audio.play_buffer_seconds() == 0
 
 
 async def test_audio_delta_tracks_item_and_resets_counter():
     wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
-    wrapper.reset_stream()
-    wrapper._played_samples = 5000  # leftover from a previous item
+    wrapper._audio.reset()
+    wrapper._audio.played_samples = 5000  # leftover from a previous item
 
     # 240 samples of API-format (24kHz mono s16) silence.
     pcm = b"\x00" * (240 * API_SAMPLE_WIDTH * API_CHANNELS)
@@ -123,15 +83,15 @@ async def test_audio_delta_tracks_item_and_resets_counter():
 
     assert wrapper._current_item_id == "item_B"
     assert wrapper._current_content_index == 0
-    assert wrapper._played_samples == 0
+    assert wrapper._audio.played_samples == 0
 
 
 async def test_barge_in_sends_truncate_before_cancel():
     wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
-    wrapper.reset_stream()
+    wrapper._audio.reset()
     wrapper._current_item_id = "item_A"
     wrapper._current_content_index = 0
-    wrapper._played_samples = 4800  # 100ms at 48kHz
+    wrapper._audio.played_samples = 4800  # 100ms at 48kHz
 
     ws = FakeWebSocket([
         {
@@ -161,10 +121,10 @@ async def test_barge_in_sends_truncate_before_cancel():
 
 async def test_barge_in_without_playback_skips_truncate():
     wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
-    wrapper.reset_stream()
+    wrapper._audio.reset()
     wrapper._current_item_id = "item_A"
     wrapper._current_content_index = 0
-    wrapper._played_samples = 0  # nothing heard yet
+    wrapper._audio.played_samples = 0  # nothing heard yet
 
     ws = FakeWebSocket([
         {
@@ -185,7 +145,7 @@ async def test_barge_in_without_playback_skips_truncate():
 
 async def test_user_row_created_before_assistant_reply():
     wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
-    wrapper.reset_stream()
+    wrapper._audio.reset()
     ws = FakeWebSocket([
         {"type": "input_audio_buffer.speech_started", "item_id": "user_1"},
         {"type": "response.output_audio_transcript.delta",
@@ -216,7 +176,7 @@ async def test_user_row_created_before_assistant_reply():
 
 async def test_input_transcription_delta_accumulates():
     wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
-    wrapper.reset_stream()
+    wrapper._audio.reset()
     ws = FakeWebSocket([
         {"type": "input_audio_buffer.speech_started", "item_id": "user_1"},
         {"type": "conversation.item.input_audio_transcription.delta",
@@ -238,7 +198,7 @@ async def test_input_transcription_delta_accumulates():
 
 async def test_barge_in_marks_prior_assistant_row_interrupted_and_starts_new_row():
     wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
-    wrapper.reset_stream()
+    wrapper._audio.reset()
     wrapper._current_item_id = "asst_1"  # audio item currently playing
     ws = FakeWebSocket([
         {"type": "response.output_audio_transcript.delta",

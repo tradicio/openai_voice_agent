@@ -12,6 +12,7 @@ from src.audio.formats import (
     FORMAT_MAPPING,
     LAYOUT_MAPPING,
 )
+from src.audio.pipeline import AudioPipeline
 
 __all__ = [
     "audio_frame_to_pcm_audio",
@@ -24,4 +25,5 @@ __all__ = [
     "CLIENT_CHANNELS",
     "FORMAT_MAPPING",
     "LAYOUT_MAPPING",
+    "AudioPipeline",
 ]
