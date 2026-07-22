@@ -6,7 +6,6 @@ import os
 import time
 from collections import deque
 
-import av
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import TypeAdapter, ValidationError
 
@@ -16,19 +15,8 @@ from api.models import (
     ControlMessage,
     IncomingMessage,
 )
-from src.audio.audio_utils import (
-    audio_frame_to_pcm_audio,
-    pcm_audio_to_audio_frame,
-)
-from src.prompts.prompts import load_prompts
-from src.realtime.config import (
-    CLIENT_CHANNELS,
-    CLIENT_SAMPLE_RATE,
-    CLIENT_SAMPLE_WIDTH,
-    FORMAT_MAPPING,
-    LAYOUT_MAPPING,
-)
-from src.realtime.realtime_client import OpenAIRealtimeAPIWrapper
+from src.prompts import load_prompts
+from src.realtime import OpenAIRealtimeAPIWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +174,7 @@ class AudioStreamSession:
             while self.recording:
                 # Snapshot: receive() may insert items mid-iteration (which
                 # would raise RuntimeError); new ones are picked up next poll.
-                items = list(self.api_wrapper._items.items())
+                items = self.api_wrapper.transcript_snapshot()
                 for item_id, item in items:
                     text = item.get("text")
                     if not text:
@@ -224,14 +212,11 @@ class AudioStreamSession:
                     await self.websocket.send_text(
                         json.dumps({"type": "clear_audio"})
                     )
-                frame = self.api_wrapper.read_play_audio(
+                pcm_audio = self.api_wrapper.read_client_pcm(
                     AUDIO_CHUNK_SIZE, partial=True
                 )
-                if frame:
-                    pcm_audio = audio_frame_to_pcm_audio(frame)
-                    base64_audio = base64.b64encode(
-                        pcm_audio
-                    ).decode('utf-8')
+                if pcm_audio:
+                    base64_audio = base64.b64encode(pcm_audio).decode('utf-8')
                     await self.websocket.send_text(
                         json.dumps({"type": "audio", "data": base64_audio})
                     )
@@ -268,14 +253,7 @@ class AudioStreamSession:
             if not audio_bytes:
                 return
 
-            frame = pcm_audio_to_audio_frame(
-                audio_bytes,
-                format=FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
-                layout=LAYOUT_MAPPING[CLIENT_CHANNELS],
-                sample_rate=CLIENT_SAMPLE_RATE
-            )
-
-            self.api_wrapper._record_stream.write(frame)
+            self.api_wrapper.write_client_pcm(audio_bytes)
             logger.debug(f"Wrote {len(audio_bytes)} bytes to audio stream")
         except Exception as e:
             logger.error(f"Audio frame error: {e}")
@@ -318,15 +296,7 @@ class AudioStreamSession:
         await self._send_status("Starting conversation...")
 
         try:
-            self.api_wrapper._record_stream = av.audio.fifo.AudioFifo(
-                format=self.api_wrapper._resampler_for_api.format,
-                layout=self.api_wrapper._resampler_for_api.layout,
-            )
-            self.api_wrapper._play_stream = av.audio.fifo.AudioFifo(
-                format=self.api_wrapper._resampler_for_client.format,
-                layout=self.api_wrapper._resampler_for_client.layout,
-            )
-
+            self.api_wrapper.reset_streams()
             # Run the API connection in the background so the handler loop
             # keeps servicing the client.
             self.api_task = asyncio.create_task(self.api_wrapper.run())

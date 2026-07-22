@@ -3,7 +3,6 @@ from functools import lru_cache
 
 import yaml
 
-
 _DEFAULT_PROMPTS_PATH = os.path.join(os.path.dirname(__file__), 'prompts.yaml')
 
 
