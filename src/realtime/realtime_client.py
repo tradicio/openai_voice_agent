@@ -24,7 +24,7 @@ from src.realtime.config import (
     FORMAT_MAPPING,
     LAYOUT_MAPPING,
 )
-from src.utils import get_logger
+from src.log import get_logger
 from src.realtime.tools import TOOL_HANDLERS, TOOL_INSTRUCTIONS
 
 
