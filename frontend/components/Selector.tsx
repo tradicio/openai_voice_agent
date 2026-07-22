@@ -2,42 +2,51 @@
 
 import { useEffect, useState } from 'react';
 
-interface Prompt {
+interface Option {
   key: string;
   label: string;
 }
 
-interface PromptSelectorProps {
+interface SelectorProps {
+  endpoint: string;
+  responseKey: string;
+  label: string;
   onSelect: (key: string) => void;
   disabled: boolean;
 }
 
-export default function PromptSelector({
+export default function Selector({
+  endpoint,
+  responseKey,
+  label,
   onSelect,
   disabled,
-}: PromptSelectorProps) {
-  const [prompts, setPrompts] = useState<Prompt[]>([]);
+}: SelectorProps) {
+  const [options, setOptions] = useState<Option[]>([]);
   const [selected, setSelected] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-    fetch(`${apiUrl}/api/prompts`)
+    fetch(`${apiUrl}${endpoint}`)
       .then((res) => {
         if (!res.ok) throw new Error(`Request failed: ${res.status}`);
         return res.json();
       })
       .then((data) => {
-        setPrompts(data.prompts);
-        if (data.prompts.length > 0) {
-          setSelected(data.prompts[0].key);
+        const items: Option[] = data[responseKey] ?? [];
+        setOptions(items);
+        if (items.length > 0) {
+          setSelected(items[0].key);
+          onSelect(items[0].key);
         }
       })
       .catch((err) => {
-        console.error('Failed to fetch prompts:', err);
-        setError('Could not load prompts. Please try refreshing the page.');
+        console.error(`Failed to fetch ${endpoint}:`, err);
+        setError(`Could not load ${label}. Please try refreshing the page.`);
       });
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endpoint, responseKey]);
 
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const key = e.target.value;
@@ -48,7 +57,7 @@ export default function PromptSelector({
   return (
     <div>
       <label className="block text-sm font-medium text-gray-700 mb-2">
-        Assistant Prompt
+        {label}
       </label>
       {error ? (
         <p className="text-sm text-red-600">{error}</p>
@@ -59,9 +68,9 @@ export default function PromptSelector({
           disabled={disabled}
           className="disabled:opacity-50"
         >
-          {prompts.map((p) => (
-            <option key={p.key} value={p.key}>
-              {p.label}
+          {options.map((o) => (
+            <option key={o.key} value={o.key}>
+              {o.label}
             </option>
           ))}
         </select>

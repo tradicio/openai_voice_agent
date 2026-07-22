@@ -4,14 +4,10 @@ from pathlib import Path
 
 import yaml
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+
+from src.realtime.config import MODELS, VOICES
 
 logger = logging.getLogger(__name__)
-
-
-class TimeoutRequest(BaseModel):
-    """Request model for timeout updates"""
-    timeout: int
 
 
 router = APIRouter()
@@ -91,31 +87,25 @@ async def get_prompts() -> dict:
     }
 
 
-@router.post("/api/session/timeout")
-async def update_session_timeout(request: TimeoutRequest) -> dict:
-    """Validate a client-requested session timeout.
-
-    Parameters
-    ----------
-    request : TimeoutRequest
-        The requested timeout, in seconds.
+@router.get("/api/models")
+async def get_models() -> dict:
+    """List the realtime models available for selection.
 
     Returns
     -------
     dict
-        ``{"status": "ok", "timeout": <int>}``.
-
-    Raises
-    ------
-    HTTPException
-        400 if the timeout is outside the 60-300 second range.
+        ``{"models": [{"key": ..., "label": ...}, ...]}``.
     """
-    timeout = request.timeout
-    if timeout < 60 or timeout > 300:
-        raise HTTPException(
-            status_code=400,
-            detail="Session timeout must be between 60 and 300 seconds"
-        )
+    return {"models": MODELS}
 
-    logger.info(f"Session timeout updated to {timeout} seconds")
-    return {"status": "ok", "timeout": timeout}
+
+@router.get("/api/voices")
+async def get_voices() -> dict:
+    """List the assistant voices available for selection.
+
+    Returns
+    -------
+    dict
+        ``{"voices": [{"key": ..., "label": ...}, ...]}``.
+    """
+    return {"voices": VOICES}

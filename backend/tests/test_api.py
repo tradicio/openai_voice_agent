@@ -3,11 +3,13 @@ from main import app
 
 client = TestClient(app)
 
+
 def test_health_check():
     """Test GET /api/health endpoint"""
     response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
 
 def test_get_prompts():
     """Test GET /api/prompts endpoint"""
@@ -19,42 +21,34 @@ def test_get_prompts():
     assert "key" in data["prompts"][0]
     assert "label" in data["prompts"][0]
 
-def test_set_timeout_valid():
-    """Test POST /api/session/timeout with valid timeout"""
-    response = client.post("/api/session/timeout", json={"timeout": 120})
+
+def test_get_models():
+    """Test GET /api/models endpoint"""
+    response = client.get("/api/models")
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "ok"
-    assert data["timeout"] == 120
+    assert "models" in data
+    assert len(data["models"]) > 0
+    keys = {m["key"] for m in data["models"]}
+    assert "gpt-realtime-2" in keys
+    for m in data["models"]:
+        assert "key" in m and "label" in m
 
-def test_set_timeout_invalid_low():
-    """Test POST /api/session/timeout with timeout too low"""
-    response = client.post("/api/session/timeout", json={"timeout": 30})
-    assert response.status_code == 400
 
-def test_set_timeout_invalid_high():
-    """Test POST /api/session/timeout with timeout too high"""
-    response = client.post("/api/session/timeout", json={"timeout": 500})
-    assert response.status_code == 400
-
-def test_timeout_boundary_low():
-    """Test POST /api/session/timeout at minimum boundary"""
-    response = client.post("/api/session/timeout", json={"timeout": 60})
+def test_get_voices():
+    """Test GET /api/voices endpoint"""
+    response = client.get("/api/voices")
     assert response.status_code == 200
-    assert response.json()["timeout"] == 60
+    data = response.json()
+    assert "voices" in data
+    assert len(data["voices"]) == 10
+    keys = {v["key"] for v in data["voices"]}
+    assert "alloy" in keys
+    for v in data["voices"]:
+        assert "key" in v and "label" in v
 
-def test_timeout_boundary_high():
-    """Test POST /api/session/timeout at maximum boundary"""
-    response = client.post("/api/session/timeout", json={"timeout": 300})
-    assert response.status_code == 200
-    assert response.json()["timeout"] == 300
 
-def test_timeout_just_below_min():
-    """Test POST /api/session/timeout just below minimum"""
-    response = client.post("/api/session/timeout", json={"timeout": 59})
-    assert response.status_code == 400
-
-def test_timeout_just_above_max():
-    """Test POST /api/session/timeout just above maximum"""
-    response = client.post("/api/session/timeout", json={"timeout": 301})
-    assert response.status_code == 400
+def test_timeout_endpoint_removed():
+    """The old timeout endpoint no longer exists."""
+    response = client.post("/api/session/timeout", json={"timeout": 120})
+    assert response.status_code == 404

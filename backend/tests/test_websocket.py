@@ -44,8 +44,11 @@ class FakeAPIWrapper:
     def transcript_snapshot(self):
         return list(self._transcript_items)
 
-    def set_session_timeout(self, timeout):
-        self.session_timeout = timeout
+    def set_model(self, model):
+        self.model = model
+
+    def set_voice(self, voice):
+        self.voice = voice
 
     def set_instructions(self, instructions):
         self.instructions = instructions
@@ -113,11 +116,26 @@ def test_rejects_oversized_message():
         assert data == {"type": "status", "message": "Message too large"}
 
 
-def test_config_updates_timeout():
+def test_config_updates_model():
     with client.websocket_connect("/ws/audio", headers=ORIGIN_HEADERS) as ws:
-        ws.send_text(json.dumps({"type": "config", "timeout": 200}))
+        ws.send_text(json.dumps({"type": "config", "model": "gpt-realtime"}))
         data = ws.receive_json()
-        assert data == {"type": "status", "message": "Timeout updated"}
+        assert data == {"type": "status", "message": "Model updated"}
+
+
+def test_config_updates_voice():
+    with client.websocket_connect("/ws/audio", headers=ORIGIN_HEADERS) as ws:
+        ws.send_text(json.dumps({"type": "config", "voice": "verse"}))
+        data = ws.receive_json()
+        assert data == {"type": "status", "message": "Voice updated"}
+
+
+def test_config_unknown_model_is_reported():
+    with client.websocket_connect("/ws/audio", headers=ORIGIN_HEADERS) as ws:
+        ws.send_text(json.dumps({"type": "config", "model": "does-not-exist"}))
+        data = ws.receive_json()
+        assert data["type"] == "status"
+        assert "not found" in data["message"]
 
 
 def test_config_unknown_prompt_key_is_reported():
@@ -135,9 +153,9 @@ def test_audio_frame_ignored_when_not_recording():
         ws.send_text(json.dumps({"type": "audio", "data": "AAAA"}))
         # Frame is dropped (no active conversation); the config message
         # confirms the handler loop is still alive.
-        ws.send_text(json.dumps({"type": "config", "timeout": 90}))
+        ws.send_text(json.dumps({"type": "config", "model": "gpt-realtime"}))
         data = ws.receive_json()
-        assert data == {"type": "status", "message": "Timeout updated"}
+        assert data == {"type": "status", "message": "Model updated"}
 
 
 def test_start_and_stop_conversation(monkeypatch):

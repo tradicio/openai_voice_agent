@@ -17,7 +17,7 @@ export function sendControlMessage(ws: WebSocket, action: 'start' | 'stop') {
 
 export function sendConfigMessage(
   ws: WebSocket,
-  config: { timeout?: number; prompt_key?: string },
+  config: { prompt_key?: string; model?: string; voice?: string },
 ) {
   ws.send(
     JSON.stringify({

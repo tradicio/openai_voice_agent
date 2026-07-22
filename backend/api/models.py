@@ -18,11 +18,12 @@ class AudioMessage(BaseModel):
 
 
 class ConfigMessage(BaseModel):
-    """Client -> Server: update the session timeout and/or active prompt."""
+    """Client -> Server: update the active prompt, model, and/or voice."""
 
     type: Literal["config"]
-    timeout: int | None = None
     prompt_key: str | None = None
+    model: str | None = None
+    voice: str | None = None
 
 
 IncomingMessage = Annotated[

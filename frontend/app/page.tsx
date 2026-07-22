@@ -1,8 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import PromptSelector from '@/components/PromptSelector';
-import TimeoutSlider from '@/components/TimeoutSlider';
+import Selector from '@/components/Selector';
 import ConversationButton from '@/components/ConversationButton';
 import TranscriptDisplay from '@/components/TranscriptDisplay';
 import { useAudioStream } from '@/hooks/useAudioStream';
@@ -10,7 +9,8 @@ import { useAudioStream } from '@/hooks/useAudioStream';
 export default function Home() {
   const [isRecording, setIsRecording] = useState(false);
   const [selectedPrompt, setSelectedPrompt] = useState('');
-  const [sessionTimeout, setSessionTimeout] = useState(120);
+  const [selectedModel, setSelectedModel] = useState('');
+  const [selectedVoice, setSelectedVoice] = useState('');
 
   const handleStartConversation = () => {
     setIsRecording(true);
@@ -23,7 +23,8 @@ export default function Home() {
   const { messages, status } = useAudioStream(
     isRecording,
     selectedPrompt,
-    sessionTimeout,
+    selectedModel,
+    selectedVoice,
     handleStopConversation,
   );
 
@@ -39,13 +40,27 @@ export default function Home() {
         </div>
       )}
 
-      <PromptSelector
+      <Selector
+        endpoint="/api/prompts"
+        responseKey="prompts"
+        label="Assistant Prompt"
         onSelect={setSelectedPrompt}
         disabled={isRecording}
       />
 
-      <TimeoutSlider
-        onTimeoutChange={setSessionTimeout}
+      <Selector
+        endpoint="/api/models"
+        responseKey="models"
+        label="Model"
+        onSelect={setSelectedModel}
+        disabled={isRecording}
+      />
+
+      <Selector
+        endpoint="/api/voices"
+        responseKey="voices"
+        label="Voice"
+        onSelect={setSelectedVoice}
         disabled={isRecording}
       />
 
