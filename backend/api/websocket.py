@@ -27,7 +27,7 @@ from src.audio.formats import (
     FORMAT_MAPPING,
     LAYOUT_MAPPING,
 )
-from src.prompts.prompts import load_prompts
+from src.prompts import load_prompts
 from src.realtime.realtime_client import OpenAIRealtimeAPIWrapper
 
 logger = logging.getLogger(__name__)

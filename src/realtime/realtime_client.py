@@ -20,11 +20,11 @@ from src.audio.formats import (
     FORMAT_MAPPING,
     LAYOUT_MAPPING,
 )
+from src.prompts import DEFAULT_INSTRUCTIONS
 from src.realtime.config import (
     REALTIME_API_URL,
     REALTIME_API_HEADERS,
     REALTIME_API_CONFIG,
-    DEFAULT_INSTRUCTIONS,
 )
 from src.log import get_logger
 from src.realtime.tools import TOOL_HANDLERS, TOOL_INSTRUCTIONS
