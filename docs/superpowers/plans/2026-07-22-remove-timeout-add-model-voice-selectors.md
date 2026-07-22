@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Backend tests run with: `cd backend && pytest tests/test_api.py -v` (imports `from main import app`; `src` is importable because `main.py` inserts the repo root on `sys.path`).
+- Backend tests run **from the repo root** with `uv` (the project targets Python 3.12 and uses `except*`; the system `python` is 3.10 and will fail collection). Full suite: `uv run pytest backend/tests/ -v`. Single file: `uv run pytest backend/tests/test_api.py -v`. Do NOT `cd backend` and do NOT call bare `pytest` — `pyproject.toml` sets `testpaths=["backend/tests"]` and `pythonpath=["backend"]` relative to the repo root. Baseline before changes: 37 passed.
 - Frontend verification runs with: `cd frontend && npm run build` and `cd frontend && npm run lint`. There is **no** frontend unit-test framework — do not add one.
 - Default model is `gpt-realtime-2`; default voice is `alloy`.
 - Models offered: `gpt-realtime-2`, `gpt-realtime`. Voices offered: `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar`.
@@ -118,7 +118,7 @@ def test_build_session_update_carries_voice_and_instructions():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd backend && pytest tests/test_config.py -v`
+Run: `uv run pytest backend/tests/test_config.py -v`
 Expected: FAIL — `ImportError` for `MODELS` / `build_realtime_url` / `build_api_config`.
 
 - [ ] **Step 3: Rewrite `src/realtime/config.py`**
@@ -243,7 +243,7 @@ def build_session_update(
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd backend && pytest tests/test_config.py -v`
+Run: `uv run pytest backend/tests/test_config.py -v`
 Expected: PASS (5 tests).
 
 - [ ] **Step 5: Commit**
@@ -315,7 +315,7 @@ def test_timeout_api_removed():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd backend && pytest tests/test_client.py -v`
+Run: `uv run pytest backend/tests/test_client.py -v`
 Expected: FAIL — `test_defaults_for_model_and_voice` errors on `w._model` (AttributeError) and `test_timeout_api_removed` fails (`timer` still present).
 
 - [ ] **Step 3: Edit the class attribute block and `__init__`**
@@ -505,7 +505,7 @@ Add (place them next to `set_instructions`):
 
 - [ ] **Step 9: Run tests to verify they pass**
 
-Run: `cd backend && pytest tests/test_client.py tests/test_config.py -v`
+Run: `uv run pytest backend/tests/test_client.py backend/tests/test_config.py -v`
 Expected: PASS (all).
 
 - [ ] **Step 10: Commit**
@@ -597,7 +597,7 @@ def test_timeout_endpoint_removed():
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd backend && pytest tests/test_api.py -v`
+Run: `uv run pytest backend/tests/test_api.py -v`
 Expected: FAIL — `test_get_models`/`test_get_voices` return 404; `test_timeout_endpoint_removed` fails because the endpoint still returns 200.
 
 - [ ] **Step 3: Update `ConfigMessage` in `backend/api/models.py`**
@@ -743,7 +743,7 @@ Also update the `_handle_config` docstring first line to:
 
 - [ ] **Step 7: Run tests to verify they pass**
 
-Run: `cd backend && pytest tests/ -v`
+Run: `uv run pytest backend/tests/ -v`
 Expected: PASS — health, prompts, models, voices, timeout-removed, plus Task 1/2 tests.
 
 - [ ] **Step 8: Commit**
@@ -1127,7 +1127,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ## Final verification
 
-- [ ] Run the full backend suite: `cd backend && pytest tests/ -v` — all pass.
+- [ ] Run the full backend suite: `uv run pytest backend/tests/ -v` — all pass.
 - [ ] Run frontend checks: `cd frontend && npm run lint && npm run build` — both pass.
 - [ ] Manual smoke (optional, needs `OPENAI_API_KEY`): start backend + frontend, pick a non-default model and voice, start a conversation, confirm the reply uses the chosen voice and the connection uses the chosen model (backend logs the URL only implicitly — verify via audio timbre change and no connection error).
 - [ ] Confirm no stray references remain: `grep -rniE "timeout|TimeoutSlider|PromptSelector|session_timeout|REALTIME_API_URL|REALTIME_API_CONFIG" backend/ src/ frontend/app frontend/components frontend/hooks frontend/lib` returns only the retained task-timeout constants in `websocket.py` (`MONITOR_TASK_TIMEOUT_S`, `API_TASK_TIMEOUT_S`, `STREAM_TASK_TIMEOUT_S`, and the `TimeoutError` handlers around `asyncio.wait_for`).
