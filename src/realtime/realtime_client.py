@@ -5,7 +5,6 @@ import datetime
 
 import websockets
 
-from src.audio.formats import CLIENT_SAMPLE_RATE
 from src.audio.pipeline import AudioPipeline
 from src.prompts import DEFAULT_INSTRUCTIONS
 from src.realtime.config import (
@@ -14,7 +13,8 @@ from src.realtime.config import (
     REALTIME_API_CONFIG,
 )
 from src.log import get_logger
-from src.realtime.tools import TOOL_HANDLERS, TOOL_INSTRUCTIONS
+from src.realtime.events import EventDispatcher, TurnState
+from src.realtime.tools import TOOL_INSTRUCTIONS
 from src.realtime.transcript import TranscriptStore
 
 
@@ -62,12 +62,13 @@ class OpenAIRealtimeAPIWrapper:
         self._recording = False
         # Source of truth for the transcript rows shown to the client.
         self._transcript = TranscriptStore()
-        self._current_response_id = None
-        self._cancelled_response_id = None
         self._barge_in_event = asyncio.Event()
-        self._current_item_id = None
-        self._current_content_index = 0
         self._audio = AudioPipeline()
+        self._turn = TurnState()
+        self._dispatcher = EventDispatcher(
+            self, self._transcript, self._audio, self._turn,
+            self._barge_in_event,
+        )
 
     async def run(self):
         """Start connection with OpenAI Realtime API and handle audio data transmission
@@ -138,208 +139,16 @@ class OpenAIRealtimeAPIWrapper:
         raise TerminateTaskGroup('send')
 
     async def receive(self, websocket: 'websockets.asyncio.client.ClientConnection'):
-        """Receive responses from OpenAI Realtime API
-
-        Args:
-            websocket (websockets.asyncio.client.ClientConnection): WebSocket client
-        """
+        """Receive responses from OpenAI Realtime API and dispatch them."""
         while True:
             try:
                 response = await websocket.recv()
                 if response:
-                    response_data = json.loads(response)
-
-                    if response_data['type'] == 'response.output_audio.delta':
-                        # Drop leftover audio still in flight for an
-                        # already-cancelled response.
-                        if self._cancelled_response_id is not None and \
-                                response_data.get('response_id') == self._cancelled_response_id:
-                            pass
-                        elif (base64_audio := response_data['delta']):
-                            item_id = response_data.get('item_id')
-                            if item_id is not None and \
-                                    item_id != self._current_item_id:
-                                self._current_item_id = item_id
-                                self._current_content_index = \
-                                    response_data.get('content_index', 0)
-                                self._audio.reset_played()
-                            # Mark the response active so a barge-in can cancel
-                            # it before any transcript delta arrives (audio
-                            # leads the transcript).
-                            self._current_response_id = \
-                                response_data.get('response_id')
-                            pcm_audio = base64.b64decode(base64_audio)
-                            self._audio.write_api_pcm(pcm_audio)
-                            logger.debug(
-                                'Event: %s - received audio from OpenAI (%d bytes)',
-                                response_data['type'],
-                                len(pcm_audio)
-                            )
-
-                    elif response_data['type'] == 'response.output_audio_transcript.delta':
-                        # Drop leftover transcript for an already-cancelled
-                        # response; it would otherwise appear after the user's
-                        # interrupting turn, reversing the visible order.
-                        if self._cancelled_response_id is None or \
-                                response_data.get('response_id') != self._cancelled_response_id:
-                            self._current_response_id = response_data.get('response_id')
-                            item_id = response_data.get('item_id')
-                            if item_id is not None:
-                                self._transcript.append_delta(
-                                    item_id, 'assistant', response_data['delta']
-                                )
-
-                    elif response_data['type'] == 'response.output_audio_transcript.done':
-                        logger.info(
-                            'Event: %s - %s',
-                            response_data['type'],
-                            response_data['transcript']
-                        )
-                        item_id = response_data.get('item_id')
-                        if item_id is not None:
-                            self._transcript.mark_status(item_id, 'done')
-
-                    elif response_data['type'] == 'conversation.item.input_audio_transcription.delta':
-                        logger.debug(
-                            'Event: %s - item=%s delta=%r',
-                            response_data['type'],
-                            response_data.get('item_id'),
-                            response_data.get('delta'),
-                        )
-                        item_id = response_data.get('item_id')
-                        if item_id is not None:
-                            self._transcript.append_delta(
-                                item_id, 'user', response_data.get('delta', '')
-                            )
-
-                    elif response_data['type'] == 'conversation.item.input_audio_transcription.completed':
-                        logger.debug(
-                            'Event: %s - item=%s transcript=%r',
-                            response_data['type'],
-                            response_data.get('item_id'),
-                            response_data.get('transcript'),
-                        )
-                        item_id = response_data.get('item_id')
-                        if item_id is not None:
-                            self._transcript.fill_if_empty(
-                                item_id, 'user', response_data.get('transcript')
-                            )
-                            self._transcript.mark_status(item_id, 'done')
-
-                    elif response_data['type'] == 'conversation.item.input_audio_transcription.failed':
-                        # Sent instead of '.completed' when a turn can't be
-                        # transcribed; logged at error level so the missing
-                        # user row is visible.
-                        logger.error(
-                            'Event: %s - item=%s error=%s',
-                            response_data['type'],
-                            response_data.get('item_id'),
-                            response_data.get('error'),
-                        )
-
-                    elif response_data['type'] == 'input_audio_buffer.speech_started':
-                        # User barged in: stop playback unconditionally. Audio
-                        # plays from the backlog for seconds after the
-                        # transcript ends, so this must not depend on
-                        # transcript state — the tail must still be stopped.
-                        self._audio.reset_play()
-                        self._barge_in_event.set()
-                        logger.debug(
-                            'Event: %s - barge-in, stopping playback item=%s',
-                            response_data['type'],
-                            response_data.get('item_id'),
-                        )
-                        if self._current_response_id is not None:
-                            # A response is still active server-side. Tell the
-                            # server how much the user actually heard (so its
-                            # state matches), then cancel it and remember the
-                            # id so in-flight deltas get dropped, not replayed.
-                            if self._current_item_id is not None and \
-                                    self._audio.played_samples > 0:
-                                audio_end_ms = round(
-                                    self._audio.played_samples
-                                    / CLIENT_SAMPLE_RATE * 1000
-                                )
-                                await websocket.send(json.dumps(dict(
-                                    type = 'conversation.item.truncate',
-                                    item_id = self._current_item_id,
-                                    content_index = (
-                                        self._current_content_index
-                                    ),
-                                    audio_end_ms = audio_end_ms,
-                                )))
-                                logger.debug(
-                                    'Truncated item %s at %dms on barge-in',
-                                    self._current_item_id,
-                                    audio_end_ms,
-                                )
-                            self._cancelled_response_id = \
-                                self._current_response_id
-                            # Mark the interrupted row so the next response
-                            # starts fresh instead of appending.
-                            if self._current_item_id is not None:
-                                self._transcript.mark_status(
-                                    self._current_item_id, 'interrupted'
-                                )
-                            await websocket.send(json.dumps(dict(
-                                type = 'response.cancel'
-                            )))
-                        # Reset per-turn state for the next response.
-                        self._current_item_id = None
-                        self._audio.reset_played()
-                        # Reserve the user's row now so its seq sorts ahead of
-                        # the reply (speech_started carries the user item_id).
-                        item_id = response_data.get('item_id')
-                        if item_id is not None:
-                            self._transcript.get_or_create(item_id, 'user')
-
-                    elif response_data['type'] == 'response.function_call_arguments.done':
-                        logger.info('Event: %s - %s', response_data['type'], response_data)
-                        tool_handler = TOOL_HANDLERS.get(response_data.get('name'))
-                        if tool_handler:
-                            arguments = json.loads(response_data.get('arguments') or '{}')
-                            tool_handler(self, arguments)
-
-                    elif response_data['type'] == 'response.done':
-                        logger.debug('%s: %s', response_data['type'], response_data)
-                        # No more deltas for this response; the next transcript
-                        # delta must start a fresh item, not append to a stale
-                        # one.
-                        self._current_item_id = None
-                        self._current_response_id = None
-                        done_response_id = response_data.get('response', {}).get('id')
-                        if done_response_id and done_response_id == self._cancelled_response_id:
-                            self._cancelled_response_id = None
-                        if self._ending:
-                            remaining_seconds = self._audio.play_buffer_seconds()
-                            logger.info(
-                                'Waiting %.2fs for the goodbye message to finish playing',
-                                remaining_seconds
-                            )
-                            await asyncio.sleep(remaining_seconds + 0.5)
-                            logger.info('Ending conversation as requested by the assistant')
-                            self.stop()
-
-                    elif response_data['type'] == 'error':
-                        logger.error('Event: %s - %s', response_data['type'], response_data)
-
-                    elif any(
-                        response_data['type'].startswith(pattern)
-                         for pattern in (
-                            'session.created',
-                            'session.updated',
-                            'conversation.item.created',
-                            'response.output_audio.',
-                            'rate_limits.updated',
-                        )
-                    ):
-                        logger.debug('%s: %s', response_data['type'], response_data)
-                    else:
-                        logger.debug('Event: %s', response_data['type'])
+                    await self._dispatcher.dispatch(json.loads(response), websocket)
                 else:
                     logger.debug('No response')
             except Exception as e:
-                logger.error('Error in receive loop', exc_info = e)
+                logger.error('Error in receive loop', exc_info=e)
                 break
         raise TerminateTaskGroup('receive')
 
@@ -398,10 +207,7 @@ class OpenAIRealtimeAPIWrapper:
         self._transcript.reset()
         # Clear per-turn tracking so a restart can't truncate against a
         # previous session's item/playback position.
-        self._current_item_id = None
-        self._current_content_index = 0
-        self._cancelled_response_id = None
-        self._current_response_id = None
+        self._turn.reset()
         self._audio.reset()
         self._audio.reset_played()
 
