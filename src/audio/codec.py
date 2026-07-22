@@ -14,6 +14,6 @@ def pcm_audio_to_audio_frame(
     sample_rate: int
 ) -> av.AudioFrame:
     raw_data = np.frombuffer(pcm_audio, np.int16).reshape(1, -1)
-    frame = av.AudioFrame.from_ndarray(raw_data, format = format, layout = layout)
+    frame = av.AudioFrame.from_ndarray(raw_data, format=format, layout=layout)
     frame.sample_rate = sample_rate
     return frame

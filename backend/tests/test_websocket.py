@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from main import app
 from starlette.websockets import WebSocketDisconnect
 
-from src.realtime.config import (
+from src.audio.formats import (
     API_CHANNELS,
     API_SAMPLE_RATE,
     API_SAMPLE_WIDTH,

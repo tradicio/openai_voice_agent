@@ -16,18 +16,18 @@ from api.models import (
     ControlMessage,
     IncomingMessage,
 )
-from src.audio.audio_utils import (
+from src.audio.codec import (
     audio_frame_to_pcm_audio,
     pcm_audio_to_audio_frame,
 )
-from src.prompts.prompts import load_prompts
-from src.realtime.config import (
+from src.audio.formats import (
     CLIENT_CHANNELS,
     CLIENT_SAMPLE_RATE,
     CLIENT_SAMPLE_WIDTH,
     FORMAT_MAPPING,
     LAYOUT_MAPPING,
 )
+from src.prompts.prompts import load_prompts
 from src.realtime.realtime_client import OpenAIRealtimeAPIWrapper
 
 logger = logging.getLogger(__name__)

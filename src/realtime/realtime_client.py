@@ -6,15 +6,11 @@ import datetime
 import av
 import websockets
 
-from src.audio.audio_utils import (
+from src.audio.codec import (
     audio_frame_to_pcm_audio,
     pcm_audio_to_audio_frame,
 )
-from src.realtime.config import (
-    REALTIME_API_URL,
-    REALTIME_API_HEADERS,
-    REALTIME_API_CONFIG,
-    DEFAULT_INSTRUCTIONS,
+from src.audio.formats import (
     API_SAMPLE_RATE,
     API_SAMPLE_WIDTH,
     API_CHANNELS,
@@ -23,6 +19,12 @@ from src.realtime.config import (
     CLIENT_CHANNELS,
     FORMAT_MAPPING,
     LAYOUT_MAPPING,
+)
+from src.realtime.config import (
+    REALTIME_API_URL,
+    REALTIME_API_HEADERS,
+    REALTIME_API_CONFIG,
+    DEFAULT_INSTRUCTIONS,
 )
 from src.log import get_logger
 from src.realtime.tools import TOOL_HANDLERS, TOOL_INSTRUCTIONS

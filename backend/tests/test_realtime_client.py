@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-from src.audio.audio_utils import pcm_audio_to_audio_frame
-from src.realtime.config import (
+from src.audio.codec import pcm_audio_to_audio_frame
+from src.audio.formats import (
     API_CHANNELS,
     API_SAMPLE_WIDTH,
     CLIENT_CHANNELS,
