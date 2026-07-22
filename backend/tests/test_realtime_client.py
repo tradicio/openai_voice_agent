@@ -19,6 +19,11 @@ from src.realtime.realtime_client import (
 )
 
 
+def _rows(wrapper):
+    """item_id -> row dict, via the public snapshot."""
+    return dict(wrapper.transcript_snapshot())
+
+
 class FakeWebSocket:
     """Feeds scripted events into receive(), then raises to end the loop.
 
@@ -178,24 +183,6 @@ async def test_barge_in_without_playback_skips_truncate():
     assert "response.cancel" in types
 
 
-def test_get_or_create_item_assigns_incrementing_seq_once():
-    wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
-
-    first = wrapper._get_or_create_item("item_A", "user")
-    second = wrapper._get_or_create_item("item_B", "assistant")
-    again = wrapper._get_or_create_item("item_A", "user")
-
-    assert first["seq"] == 0
-    assert first["role"] == "user"
-    assert first["status"] == "in_progress"
-    assert second["seq"] == 1
-    # Same id returns the same record; seq is not reassigned.
-    assert again is first
-    assert first["seq"] == 0
-    # Insertion order is creation order.
-    assert list(wrapper._items.keys()) == ["item_A", "item_B"]
-
-
 async def test_user_row_created_before_assistant_reply():
     wrapper = OpenAIRealtimeAPIWrapper(api_key="test-key")
     wrapper.reset_stream()
@@ -214,8 +201,9 @@ async def test_user_row_created_before_assistant_reply():
     with pytest.raises(TerminateTaskGroup):
         await wrapper.receive(ws)
 
-    user = wrapper._items["user_1"]
-    asst = wrapper._items["asst_1"]
+    rows = _rows(wrapper)
+    user = rows["user_1"]
+    asst = rows["asst_1"]
     # User row was reserved first, so it sorts ahead of the assistant reply.
     assert user["seq"] < asst["seq"]
     assert user["role"] == "user"
@@ -243,8 +231,9 @@ async def test_input_transcription_delta_accumulates():
         await wrapper.receive(ws)
 
     # Deltas already built the text; completed must not double it (append-only).
-    assert wrapper._items["user_1"]["text"] == "Hello"
-    assert wrapper._items["user_1"]["status"] == "done"
+    rows = _rows(wrapper)
+    assert rows["user_1"]["text"] == "Hello"
+    assert rows["user_1"]["status"] == "done"
 
 
 async def test_barge_in_marks_prior_assistant_row_interrupted_and_starts_new_row():
@@ -262,11 +251,12 @@ async def test_barge_in_marks_prior_assistant_row_interrupted_and_starts_new_row
     with pytest.raises(TerminateTaskGroup):
         await wrapper.receive(ws)
 
-    assert wrapper._items["asst_1"]["status"] == "interrupted"
-    assert wrapper._items["asst_1"]["text"] == "Let me expl"
+    rows = _rows(wrapper)
+    assert rows["asst_1"]["status"] == "interrupted"
+    assert rows["asst_1"]["text"] == "Let me expl"
     # A distinct row for the new response; not merged into asst_1.
-    assert "asst_2" in wrapper._items
-    assert wrapper._items["asst_2"]["text"] == "New answer"
-    assert wrapper._items["asst_1"]["seq"] != wrapper._items["asst_2"]["seq"]
+    assert "asst_2" in rows
+    assert rows["asst_2"]["text"] == "New answer"
+    assert rows["asst_1"]["seq"] != rows["asst_2"]["seq"]
     # response.cancel was sent on barge-in.
     assert any(m.get("type") == "response.cancel" for m in ws.sent)

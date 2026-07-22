@@ -34,7 +34,7 @@ class FakeAPIWrapper:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.recording = False
-        self._items: dict[str, dict] = {}
+        self._transcript_items: list[tuple[str, dict]] = []
         self._played_samples = 0
         self._resampler_for_api = av.audio.resampler.AudioResampler(
             format=FORMAT_MAPPING[API_SAMPLE_WIDTH],
@@ -59,6 +59,9 @@ class FakeAPIWrapper:
 
     def consume_barge_in(self) -> bool:
         return False
+
+    def transcript_snapshot(self):
+        return list(self._transcript_items)
 
     def read_play_audio(self, nsamples, partial=True):
         frame = self._play_stream.read(nsamples, partial=partial)
@@ -228,12 +231,12 @@ class FakeAPIWrapperWithItems(FakeAPIWrapper):
 
     async def run(self):
         self.recording = True
-        self._items = {
-            "user_1": {"role": "user", "text": "Hello", "seq": 0,
-                       "status": "done"},
-            "asst_1": {"role": "assistant", "text": "Hi there", "seq": 1,
-                       "status": "done"},
-        }
+        self._transcript_items = [
+            ("user_1", {"role": "user", "text": "Hello", "seq": 0,
+                        "status": "done"}),
+            ("asst_1", {"role": "assistant", "text": "Hi there", "seq": 1,
+                        "status": "done"}),
+        ]
         while self.recording:
             await asyncio.sleep(0.01)
 

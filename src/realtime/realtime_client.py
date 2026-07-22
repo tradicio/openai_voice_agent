@@ -28,6 +28,7 @@ from src.realtime.config import (
 )
 from src.log import get_logger
 from src.realtime.tools import TOOL_HANDLERS, TOOL_INSTRUCTIONS
+from src.realtime.transcript import TranscriptStore
 
 
 logger = get_logger(__name__)
@@ -50,7 +51,6 @@ class OpenAIRealtimeAPIWrapper:
     _instructions: str
     _ending: bool
     _recording: bool
-    _items: dict[str, dict]
     _resampler_for_api: av.audio.resampler.AudioResampler
     _resampler_for_client: av.audio.resampler.AudioResampler
     _record_stream: av.audio.fifo.AudioFifo
@@ -77,10 +77,8 @@ class OpenAIRealtimeAPIWrapper:
         self._ending = False
 
         self._recording = False
-        # item_id -> {"role", "text", "seq", "status"}, insertion-ordered.
         # Source of truth for the transcript rows shown to the client.
-        self._items: dict[str, dict] = {}
-        self._next_seq = 0
+        self._transcript = TranscriptStore()
         self._current_response_id = None
         self._cancelled_response_id = None
         self._barge_in_event = asyncio.Event()
@@ -227,8 +225,9 @@ class OpenAIRealtimeAPIWrapper:
                             self._current_response_id = response_data.get('response_id')
                             item_id = response_data.get('item_id')
                             if item_id is not None:
-                                item = self._get_or_create_item(item_id, 'assistant')
-                                item['text'] += response_data['delta']
+                                self._transcript.append_delta(
+                                    item_id, 'assistant', response_data['delta']
+                                )
 
                     elif response_data['type'] == 'response.output_audio_transcript.done':
                         logger.info(
@@ -237,8 +236,8 @@ class OpenAIRealtimeAPIWrapper:
                             response_data['transcript']
                         )
                         item_id = response_data.get('item_id')
-                        if item_id is not None and item_id in self._items:
-                            self._items[item_id]['status'] = 'done'
+                        if item_id is not None:
+                            self._transcript.mark_status(item_id, 'done')
 
                     elif response_data['type'] == 'conversation.item.input_audio_transcription.delta':
                         logger.debug(
@@ -249,8 +248,9 @@ class OpenAIRealtimeAPIWrapper:
                         )
                         item_id = response_data.get('item_id')
                         if item_id is not None:
-                            item = self._get_or_create_item(item_id, 'user')
-                            item['text'] += response_data.get('delta', '')
+                            self._transcript.append_delta(
+                                item_id, 'user', response_data.get('delta', '')
+                            )
 
                     elif response_data['type'] == 'conversation.item.input_audio_transcription.completed':
                         logger.debug(
@@ -261,14 +261,10 @@ class OpenAIRealtimeAPIWrapper:
                         )
                         item_id = response_data.get('item_id')
                         if item_id is not None:
-                            item = self._get_or_create_item(item_id, 'user')
-                            transcript = response_data.get('transcript')
-                            # Append-only: only fill from 'completed' if no
-                            # deltas arrived (whisper-1 sends only 'completed';
-                            # other models stream deltas first).
-                            if transcript and not item['text']:
-                                item['text'] = transcript
-                            item['status'] = 'done'
+                            self._transcript.fill_if_empty(
+                                item_id, 'user', response_data.get('transcript')
+                            )
+                            self._transcript.mark_status(item_id, 'done')
 
                     elif response_data['type'] == 'conversation.item.input_audio_transcription.failed':
                         # Sent instead of '.completed' when a turn can't be
@@ -321,10 +317,10 @@ class OpenAIRealtimeAPIWrapper:
                                 self._current_response_id
                             # Mark the interrupted row so the next response
                             # starts fresh instead of appending.
-                            if self._current_item_id is not None and \
-                                    self._current_item_id in self._items:
-                                self._items[self._current_item_id]['status'] = \
-                                    'interrupted'
+                            if self._current_item_id is not None:
+                                self._transcript.mark_status(
+                                    self._current_item_id, 'interrupted'
+                                )
                             await websocket.send(json.dumps(dict(
                                 type = 'response.cancel'
                             )))
@@ -335,7 +331,7 @@ class OpenAIRealtimeAPIWrapper:
                         # the reply (speech_started carries the user item_id).
                         item_id = response_data.get('item_id')
                         if item_id is not None:
-                            self._get_or_create_item(item_id, 'user')
+                            self._transcript.get_or_create(item_id, 'user')
 
                     elif response_data['type'] == 'response.function_call_arguments.done':
                         logger.info('Event: %s - %s', response_data['type'], response_data)
@@ -439,8 +435,7 @@ class OpenAIRealtimeAPIWrapper:
             raise RuntimeError('Already recording')
         self._recording = True
         self._ending = False
-        self._items = {}
-        self._next_seq = 0
+        self._transcript.reset()
         # Clear per-turn tracking so a restart can't truncate against a
         # previous session's item/playback position.
         self._current_item_id = None
@@ -466,27 +461,9 @@ class OpenAIRealtimeAPIWrapper:
             return True
         return False
 
-    def _get_or_create_item(self, item_id: str, role: str) -> dict:
-        """Return the transcript item for ``item_id``, creating it if new.
-
-        A stable, monotonically increasing ``seq`` is assigned once, when the
-        item is first seen, and defines the row order shown to the client.
-
-        Args:
-            item_id (str): The Realtime API conversation item id.
-            role (str): ``'user'`` or ``'assistant'``.
-        Returns:
-            dict: The item record ``{"role", "text", "seq", "status"}``.
-        """
-        item = self._items.get(item_id)
-        if item is None:
-            item = dict(
-                role = role, text = '', seq = self._next_seq,
-                status = 'in_progress',
-            )
-            self._items[item_id] = item
-            self._next_seq += 1
-        return item
+    def transcript_snapshot(self) -> list[tuple[str, dict]]:
+        """Return (item_id, row) pairs in creation order for the client."""
+        return self._transcript.snapshot()
 
     def read_play_audio(self, nsamples: int, partial: bool = True):
         """Drain playback audio, counting what has been sent to the client.

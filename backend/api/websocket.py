@@ -186,7 +186,7 @@ class AudioStreamSession:
             while self.recording:
                 # Snapshot: receive() may insert items mid-iteration (which
                 # would raise RuntimeError); new ones are picked up next poll.
-                items = list(self.api_wrapper._items.items())
+                items = self.api_wrapper.transcript_snapshot()
                 for item_id, item in items:
                     text = item.get("text")
                     if not text:
