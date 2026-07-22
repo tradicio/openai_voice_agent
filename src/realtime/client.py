@@ -1,6 +1,5 @@
 import asyncio
 import base64
-import datetime
 import json
 
 import websockets
@@ -9,8 +8,10 @@ from src.audio.pipeline import AudioPipeline
 from src.log import get_logger
 from src.prompts import DEFAULT_INSTRUCTIONS
 from src.realtime.config import (
+    DEFAULT_MODEL,
+    DEFAULT_VOICE,
     REALTIME_API_HEADERS,
-    REALTIME_API_URL,
+    build_realtime_url,
     build_session_update,
 )
 from src.realtime.events import EventDispatcher, TurnState
@@ -32,30 +33,34 @@ class TerminateTaskGroup(Exception):
 
 class OpenAIRealtimeAPIWrapper:
     _api_key: str
-    _session_timeout: int | float
     _send_interval: float
     _instructions: str
+    _model: str
+    _voice: str
     _ending: bool
     _recording: bool
 
     def __init__(
         self,
         api_key: str,
-        session_timeout: int | float = 60,
         send_interval: float = 0.2,
-        instructions: str = DEFAULT_INSTRUCTIONS
+        instructions: str = DEFAULT_INSTRUCTIONS,
+        model: str = DEFAULT_MODEL,
+        voice: str = DEFAULT_VOICE,
     ):
         """
         Args:
             api_key (str): OpenAI API key
-            session_timeout (int | float): Voice chat session timeout duration (seconds)
             send_interval (float): Interval for sending voice data (seconds)
             instructions (str): System instructions (prompt) for the assistant
+            model (str): Realtime model key used for the connection
+            voice (str): Output voice key for the assistant
         """
         self._api_key = api_key
-        self._session_timeout = session_timeout
         self._send_interval = send_interval
         self._instructions = instructions
+        self._model = model
+        self._voice = voice
         self._ending = False
 
         self._recording = False
@@ -79,7 +84,7 @@ class OpenAIRealtimeAPIWrapper:
         self.start()
 
         async with websockets.connect(
-            REALTIME_API_URL,
+            build_realtime_url(self._model),
             additional_headers = {
                 'Authorization': f"Bearer {self._api_key}",
                 **REALTIME_API_HEADERS
@@ -93,7 +98,6 @@ class OpenAIRealtimeAPIWrapper:
                 async with asyncio.TaskGroup() as task_group:
                     task_group.create_task(self.send(websocket))
                     task_group.create_task(self.receive(websocket))
-                    task_group.create_task(self.timer())
                     task_group.create_task(self.status_checker())
             except* TerminateTaskGroup as eg:
                 logger.info('Connection closing: %s', eg.exceptions[0].reason)
@@ -108,7 +112,9 @@ class OpenAIRealtimeAPIWrapper:
             websocket (websockets.asyncio.client.ClientConnection): WebSocket client
         """
         instructions = '\n\n'.join([self._instructions, *TOOL_INSTRUCTIONS])
-        await websocket.send(json.dumps(build_session_update(instructions)))
+        await websocket.send(
+            json.dumps(build_session_update(instructions, self._voice))
+        )
 
     async def send(self, websocket: 'websockets.asyncio.client.ClientConnection'):
         """Send audio data to OpenAI Realtime API
@@ -148,14 +154,6 @@ class OpenAIRealtimeAPIWrapper:
                 break
         raise TerminateTaskGroup('receive')
 
-    async def timer(self):
-        """Monitor session timeout
-        """
-        await asyncio.sleep(
-            datetime.timedelta(seconds = self._session_timeout).total_seconds()
-        )
-        raise TerminateTaskGroup('timer')
-
     async def status_checker(self):
         """Monitor recording status and terminate task group when recording ends
         """
@@ -170,15 +168,18 @@ class OpenAIRealtimeAPIWrapper:
         """
         return self._recording
 
-    def set_session_timeout(self, timeout: int | float):
-        """Set session timeout duration
-        """
-        self._session_timeout = timeout
-
     def set_instructions(self, instructions: str):
         """Set assistant system instructions (prompt)
         """
         self._instructions = instructions
+
+    def set_model(self, model: str):
+        """Set the realtime model used for the next connection."""
+        self._model = model
+
+    def set_voice(self, voice: str):
+        """Set the assistant output voice used for the next connection."""
+        self._voice = voice
 
     def request_end_conversation(self):
         """Mark the conversation to stop once the current response finishes playing

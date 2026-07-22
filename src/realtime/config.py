@@ -47,11 +47,6 @@ def build_realtime_url(model: str = DEFAULT_MODEL) -> str:
     return f"wss://api.openai.com/v1/realtime?model={model}"
 
 
-# Backward-compat: ``client.py`` still imports this default URL until Task 2
-# migrates it to ``build_realtime_url(self._model)``. Remove in Task 2.
-REALTIME_API_URL = build_realtime_url()
-
-
 def build_api_config(voice: str = DEFAULT_VOICE) -> dict:
     """Build a fresh Realtime session config with the given output voice.
 
