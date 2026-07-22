@@ -18,9 +18,10 @@
 Core class managing OpenAI Realtime API connection. Unchanged from original project.
 
 Methods:
-- `run()` — Async event loop managing send/receive/timer/status tasks
+- `run()` — Async event loop managing send/receive/status tasks
 - `stop()` — Stops the session
-- `set_session_timeout()` — Updates timeout
+- `set_model()` — Sets the realtime model for the next connection
+- `set_voice()` — Sets the assistant output voice
 - `set_instructions()` — Changes system prompt
 
 ### AudioStreamSession
@@ -30,7 +31,7 @@ Methods:
 - `handle()` — Main message loop
 - `_start_conversation()` — Initiates API connection with FIFO buffers
 - `_stop_conversation()` — Closes API connection
-- `_handle_config()` — Applies configuration changes (timeout, prompt)
+- `_handle_config()` — Applies configuration changes (prompt, model, voice)
 - `_handle_audio_frame()` — Decodes and writes audio to FIFO
 
 ## API Endpoints
@@ -47,9 +48,25 @@ Methods:
 }
 ```
 
-**POST /api/session/timeout**
-Request: `{"timeout": 120}`
-Response: `{"status": "ok", "timeout": 120}`
+**GET /api/models**
+```json
+{
+  "models": [
+    {"key": "gpt-realtime-2", "label": "GPT Realtime 2"},
+    {"key": "gpt-realtime", "label": "GPT Realtime"}
+  ]
+}
+```
+
+**GET /api/voices**
+```json
+{
+  "voices": [
+    {"key": "alloy", "label": "Alloy"},
+    {"key": "ash", "label": "Ash"}
+  ]
+}
+```
 
 **GET /api/health**
 Response: `{"status": "ok"}`
@@ -61,7 +78,7 @@ Response: `{"status": "ok"}`
 Client → Server:
 ```json
 {"type": "control", "action": "start"}
-{"type": "config", "timeout": 120, "prompt_key": "default"}
+{"type": "config", "prompt_key": "default", "model": "gpt-realtime-2", "voice": "alloy"}
 {"type": "audio", "data": "<base64 pcm>"}
 {"type": "control", "action": "stop"}
 ```
@@ -91,7 +108,7 @@ python main.py
 pytest tests/test_api.py -v
 ```
 
-All 8 tests should pass (health, prompts, timeout validation).
+All tests should pass (health, prompts, models, voices, config factories, client).
 
 ## Debugging
 

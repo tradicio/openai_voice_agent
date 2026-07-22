@@ -41,7 +41,7 @@ live transcript, with natural barge-in (you can talk over it).
 ├── backend/                   # FastAPI service (port 8000)
 │   ├── main.py                # App entry point, CORS, route wiring
 │   ├── api/
-│   │   ├── routes.py          # REST: /api/health, /api/prompts, /api/session/timeout
+│   │   ├── routes.py          # REST: /api/health, /api/prompts, /api/models, /api/voices
 │   │   ├── websocket.py       # /ws/audio: AudioStreamSession orchestration
 │   │   └── models.py          # Pydantic message models
 │   ├── tests/                 # pytest suite
@@ -49,7 +49,7 @@ live transcript, with natural barge-in (you can talk over it).
 │
 ├── frontend/                  # Next.js service (port 3000)
 │   ├── app/                   # Next.js App Router (page.tsx, layout.tsx)
-│   ├── components/            # PromptSelector, TimeoutSlider, ConversationButton, TranscriptDisplay
+│   ├── components/            # PromptSelector, ModelSelector, VoiceSelector, ConversationButton, TranscriptDisplay
 │   ├── hooks/useAudioStream.ts# WebSocket + audio lifecycle, transcript assembly
 │   ├── lib/                   # api.ts, audioCapture.ts, audioPlayback.ts
 │   └── DEVELOPMENT.md         # Frontend developer guide
@@ -118,7 +118,7 @@ backend, set `NEXT_PUBLIC_API_URL` in `frontend/.env.local` (see
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
-Then open `http://localhost:3000`, pick a prompt, adjust the timeout, click
+Then open `http://localhost:3000`, pick a prompt, select the model and voice, click
 **Start Conversation**, and grant microphone access.
 
 ## How it works
@@ -129,7 +129,7 @@ Each browser tab opens one WebSocket to `/ws/audio`. The backend validates
 the `Origin` header against `FRONTEND_URL` and creates an
 `AudioStreamSession` (`backend/api/websocket.py`) that owns everything for
 that connection. The frontend then sends a `config` message (chosen prompt +
-timeout) and a `control: start` message; the backend opens the OpenAI
+model + voice) and a `control: start` message; the backend opens the OpenAI
 Realtime connection and spins up three background tasks:
 
 - an **API task** running `OpenAIRealtimeAPIWrapper.run()` (the send/receive
@@ -197,7 +197,7 @@ Client → Server:
 
 ```json
 {"type": "control", "action": "start"}          // or "stop"
-{"type": "config",  "timeout": 120, "prompt_key": "default"}
+{"type": "config",  "prompt_key": "default", "model": "gpt-realtime-2", "voice": "alloy"}
 {"type": "audio",   "data": "<base64 PCM>"}
 ```
 
@@ -216,7 +216,8 @@ Server → Client:
 | ------ | ------------------------ | ----------------------------------------- |
 | GET    | `/api/health`            | Liveness check → `{"status": "ok"}`       |
 | GET    | `/api/prompts`           | List selectable prompts (key + label)     |
-| POST   | `/api/session/timeout`   | Validate a session timeout (60–300s)      |
+| GET    | `/api/models`            | List selectable models (key + label)      |
+| GET    | `/api/voices`            | List selectable voices (key + label)      |
 
 ## Configuration
 
