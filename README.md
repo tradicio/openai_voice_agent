@@ -49,7 +49,7 @@ live transcript, with natural barge-in (you can talk over it).
 │
 ├── frontend/                  # Next.js service (port 3000)
 │   ├── app/                   # Next.js App Router (page.tsx, layout.tsx)
-│   ├── components/            # PromptSelector, ModelSelector, VoiceSelector, ConversationButton, TranscriptDisplay
+│   ├── components/            # Selector, ConversationButton, TranscriptDisplay
 │   ├── hooks/useAudioStream.ts# WebSocket + audio lifecycle, transcript assembly
 │   ├── lib/                   # api.ts, audioCapture.ts, audioPlayback.ts
 │   └── DEVELOPMENT.md         # Frontend developer guide
