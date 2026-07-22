@@ -46,7 +46,8 @@ function encodeAudioFrame(data: Float32Array): string {
 export function useAudioStream(
   isActive: boolean,
   promptKey: string,
-  timeout: number,
+  model: string,
+  voice: string,
   onConversationEnded?: () => void,
 ) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -166,7 +167,8 @@ export function useAudioStream(
 
       sendConfigMessage(newWs, {
         prompt_key: promptKey,
-        timeout,
+        model,
+        voice,
       });
 
       const manager = new AudioCaptureManager();
@@ -199,7 +201,7 @@ export function useAudioStream(
       audioPlaybackRef.current = null;
       wsRef.current = null;
     };
-  }, [isActive, promptKey, timeout]);
+  }, [isActive, promptKey, model, voice]);
 
   return { messages, status };
 }
