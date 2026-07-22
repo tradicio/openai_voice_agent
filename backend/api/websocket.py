@@ -296,6 +296,7 @@ class AudioStreamSession:
         await self._send_status("Starting conversation...")
 
         try:
+            self.api_wrapper.reset_streams()
             # Run the API connection in the background so the handler loop
             # keeps servicing the client.
             self.api_task = asyncio.create_task(self.api_wrapper.run())

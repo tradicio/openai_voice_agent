@@ -50,6 +50,9 @@ class FakeAPIWrapper:
     def set_instructions(self, instructions):
         self.instructions = instructions
 
+    def reset_streams(self):
+        pass
+
 
 class FakeAPIWrapperWithBargeIn(FakeAPIWrapper):
     """Signals a single barge-in event on the first check."""

@@ -1,7 +1,6 @@
 from src.audio.formats import API_SAMPLE_RATE
 from src.realtime.tools import TOOL_DEFINITIONS
 
-
 # Configuration for calling Realtime API
 REALTIME_API_URL = "wss://api.openai.com/v1/realtime?model=gpt-realtime-2"
 REALTIME_API_HEADERS = {}

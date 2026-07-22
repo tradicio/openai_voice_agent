@@ -100,3 +100,19 @@ class AudioPipeline:
             format=FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
             layout=LAYOUT_MAPPING[CLIENT_CHANNELS],
         )
+
+    def open(self) -> None:
+        """Force-create fresh (empty) record and play FIFOs and reset the counter.
+
+        Called at the start of each conversation so a stop/start on the same
+        session discards any audio left buffered from the previous one.
+        """
+        self._record_stream = av.audio.fifo.AudioFifo(
+            format=FORMAT_MAPPING[API_SAMPLE_WIDTH],
+            layout=LAYOUT_MAPPING[API_CHANNELS],
+        )
+        self._play_stream = av.audio.fifo.AudioFifo(
+            format=FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
+            layout=LAYOUT_MAPPING[CLIENT_CHANNELS],
+        )
+        self.played_samples = 0

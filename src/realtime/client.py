@@ -1,22 +1,21 @@
-import json
-import base64
 import asyncio
+import base64
 import datetime
+import json
 
 import websockets
 
 from src.audio.pipeline import AudioPipeline
+from src.log import get_logger
 from src.prompts import DEFAULT_INSTRUCTIONS
 from src.realtime.config import (
-    REALTIME_API_URL,
     REALTIME_API_HEADERS,
+    REALTIME_API_URL,
     build_session_update,
 )
-from src.log import get_logger
 from src.realtime.events import EventDispatcher, TurnState
 from src.realtime.tools import TOOL_INSTRUCTIONS
 from src.realtime.transcript import TranscriptStore
-
 
 logger = get_logger(__name__)
 
@@ -235,3 +234,7 @@ class OpenAIRealtimeAPIWrapper:
     def read_client_pcm(self, nsamples: int, partial: bool = True) -> bytes | None:
         """Drain playback audio as PCM bytes for the client; None if empty."""
         return self._audio.read_client_pcm(nsamples, partial=partial)
+
+    def reset_streams(self) -> None:
+        """Force fresh audio FIFOs for a new conversation (drops stale audio)."""
+        self._audio.open()

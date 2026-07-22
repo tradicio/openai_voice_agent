@@ -1,6 +1,5 @@
 from src.audio.formats import (
     CLIENT_CHANNELS,
-    CLIENT_SAMPLE_RATE,
     CLIENT_SAMPLE_WIDTH,
 )
 from src.audio.pipeline import AudioPipeline
@@ -35,4 +34,14 @@ def test_reset_played_zeros_counter():
     pipe = AudioPipeline()
     pipe.played_samples = 5000
     pipe.reset_played()
+    assert pipe.played_samples == 0
+
+
+def test_open_drops_buffered_audio_and_resets_counter():
+    pipe = AudioPipeline()
+    pipe.write_api_pcm(b"\x00" * (240 * 2 * 1))
+    pipe.played_samples = 4800
+    assert pipe.play_buffer_seconds() > 0
+    pipe.open()
+    assert pipe.play_buffer_seconds() == 0
     assert pipe.played_samples == 0
