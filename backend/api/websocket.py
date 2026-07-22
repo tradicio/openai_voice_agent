@@ -17,6 +17,12 @@ from api.models import (
 )
 from src.prompts import load_prompts
 from src.realtime import OpenAIRealtimeAPIWrapper
+from src.realtime.config import (
+    DEFAULT_MODEL,
+    DEFAULT_VOICE,
+    MODEL_KEYS,
+    VOICE_KEYS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +52,10 @@ class AudioStreamSession:
         self.api_task = None
         self.monitor_task = None
         self.stream_task = None
-        self.session_timeout = 120
         prompts = load_prompts()
         self.prompt_key = next(iter(prompts), "default")
+        self.model = DEFAULT_MODEL
+        self.voice = DEFAULT_VOICE
         self.loop = asyncio.get_event_loop()
         # item_id -> chars already forwarded
         self.last_transcript_lengths: dict[str, int] = {}
@@ -259,29 +266,45 @@ class AudioStreamSession:
             logger.error(f"Audio frame error: {e}")
 
     async def _handle_config(self, message: ConfigMessage):
-        """Apply a client-requested session timeout and/or prompt change.
+        """Apply a client-requested prompt, model, and/or voice change.
 
         Parameters
         ----------
         message : ConfigMessage
-            The requested configuration update; either field may be
-            omitted.
+            The requested configuration update; any field may be omitted.
         """
         try:
-            if message.timeout is not None:
-                self.session_timeout = message.timeout
-                self.api_wrapper.set_session_timeout(self.session_timeout)
-                await self._send_status("Timeout updated")
-
             if message.prompt_key is not None:
                 prompts = load_prompts()
                 if message.prompt_key in prompts:
                     self.prompt_key = message.prompt_key
-                    self.api_wrapper.set_instructions(prompts[self.prompt_key]["instructions"])
+                    self.api_wrapper.set_instructions(
+                        prompts[self.prompt_key]["instructions"]
+                    )
                     await self._send_status("Prompt updated")
                 else:
                     await self._send_status(
                         f"Prompt '{message.prompt_key}' not found"
+                    )
+
+            if message.model is not None:
+                if message.model in MODEL_KEYS:
+                    self.model = message.model
+                    self.api_wrapper.set_model(self.model)
+                    await self._send_status("Model updated")
+                else:
+                    await self._send_status(
+                        f"Model '{message.model}' not found"
+                    )
+
+            if message.voice is not None:
+                if message.voice in VOICE_KEYS:
+                    self.voice = message.voice
+                    self.api_wrapper.set_voice(self.voice)
+                    await self._send_status("Voice updated")
+                else:
+                    await self._send_status(
+                        f"Voice '{message.voice}' not found"
                     )
         except Exception as e:
             logger.error(f"Error handling config: {e}")
