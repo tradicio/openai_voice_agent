@@ -30,3 +30,11 @@ REALTIME_API_CONFIG = dict(
     tools = TOOL_DEFINITIONS,
     tool_choice = 'auto',
 )
+
+
+def build_session_update(instructions: str) -> dict:
+    """Build the session.update payload with the given instructions."""
+    return dict(
+        type='session.update',
+        session=dict(REALTIME_API_CONFIG, instructions=instructions),
+    )

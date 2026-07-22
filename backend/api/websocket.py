@@ -16,7 +16,7 @@ from api.models import (
     IncomingMessage,
 )
 from src.prompts import load_prompts
-from src.realtime.realtime_client import OpenAIRealtimeAPIWrapper
+from src.realtime import OpenAIRealtimeAPIWrapper
 
 logger = logging.getLogger(__name__)
 

@@ -6,7 +6,7 @@
 - `api/routes.py` — REST API endpoints
 - `api/websocket.py` — WebSocket handler with session management
 - `api/models.py` — Pydantic message models
-- `src/realtime/realtime_client.py` — OpenAI Realtime API wrapper (unchanged from original)
+- `src/realtime/client.py` — OpenAI Realtime API wrapper (unchanged from original)
 - `src/audio/audio_utils.py` — Audio processing utilities
 - `src/prompts/prompts.py` and `prompts.yaml` — Prompt definitions
 - `src/utils.py` — Shared utilities (logging, event loop, hashing)

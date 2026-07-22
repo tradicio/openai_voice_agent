@@ -1,3 +1,3 @@
-from src.realtime.realtime_client import OpenAIRealtimeAPIWrapper
+from src.realtime.client import OpenAIRealtimeAPIWrapper, TerminateTaskGroup
 
-__all__ = ["OpenAIRealtimeAPIWrapper"]
+__all__ = ["OpenAIRealtimeAPIWrapper", "TerminateTaskGroup"]

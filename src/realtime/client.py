@@ -10,7 +10,7 @@ from src.prompts import DEFAULT_INSTRUCTIONS
 from src.realtime.config import (
     REALTIME_API_URL,
     REALTIME_API_HEADERS,
-    REALTIME_API_CONFIG,
+    build_session_update,
 )
 from src.log import get_logger
 from src.realtime.events import EventDispatcher, TurnState
@@ -109,10 +109,7 @@ class OpenAIRealtimeAPIWrapper:
             websocket (websockets.asyncio.client.ClientConnection): WebSocket client
         """
         instructions = '\n\n'.join([self._instructions, *TOOL_INSTRUCTIONS])
-        await websocket.send(json.dumps(dict(
-            type = 'session.update',
-            session = dict(REALTIME_API_CONFIG, instructions = instructions),
-        )))
+        await websocket.send(json.dumps(build_session_update(instructions)))
 
     async def send(self, websocket: 'websockets.asyncio.client.ClientConnection'):
         """Send audio data to OpenAI Realtime API
