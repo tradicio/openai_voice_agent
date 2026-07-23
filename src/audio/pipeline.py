@@ -34,6 +34,20 @@ class AudioPipeline:
         self.played_samples = 0
         self.reset()
 
+    def _record_fifo(self) -> av.audio.fifo.AudioFifo:
+        """A fresh record (API-format) FIFO."""
+        return av.audio.fifo.AudioFifo(
+            format=FORMAT_MAPPING[API_SAMPLE_WIDTH],
+            layout=LAYOUT_MAPPING[API_CHANNELS],
+        )
+
+    def _play_fifo(self) -> av.audio.fifo.AudioFifo:
+        """A fresh play (client-format) FIFO."""
+        return av.audio.fifo.AudioFifo(
+            format=FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
+            layout=LAYOUT_MAPPING[CLIENT_CHANNELS],
+        )
+
     def write_client_pcm(self, pcm_bytes: bytes) -> None:
         """Enqueue a client-format PCM frame for uplink to the API."""
         frame = pcm_audio_to_audio_frame(
@@ -54,7 +68,7 @@ class AudioPipeline:
         return audio_frame_to_pcm_audio(resampled)
 
     def write_api_pcm(self, pcm_bytes: bytes) -> None:
-        """Enqueue an API-format PCM frame for downlink, resampled to client."""
+        """Enqueue API-format PCM frame for downlink, resampled to client."""
         frame = pcm_audio_to_audio_frame(
             pcm_bytes,
             format=FORMAT_MAPPING[API_SAMPLE_WIDTH],
@@ -65,8 +79,10 @@ class AudioPipeline:
         assert not rest
         self._play_stream.write(resampled)
 
-    def read_client_pcm(self, nsamples: int, partial: bool = True) -> bytes | None:
-        """Drain up to nsamples of playback, counting what is sent; None if empty."""
+    def read_client_pcm(
+        self, nsamples: int, partial: bool = True
+    ) -> bytes | None:
+        """Drain nsamples of playback, counting what is sent; None if empty."""
         frame = self._play_stream.read(nsamples, partial=partial)
         if not frame:
             return None
@@ -84,35 +100,20 @@ class AudioPipeline:
     def reset(self) -> None:
         """Create the FIFOs if missing (does not empty existing buffers)."""
         if self._record_stream is None:
-            self._record_stream = av.audio.fifo.AudioFifo(
-                format=FORMAT_MAPPING[API_SAMPLE_WIDTH],
-                layout=LAYOUT_MAPPING[API_CHANNELS],
-            )
+            self._record_stream = self._record_fifo()
         if self._play_stream is None:
-            self._play_stream = av.audio.fifo.AudioFifo(
-                format=FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
-                layout=LAYOUT_MAPPING[CLIENT_CHANNELS],
-            )
+            self._play_stream = self._play_fifo()
 
     def reset_play(self) -> None:
-        """Force-recreate (empty) the play FIFO — drops buffered assistant audio."""
-        self._play_stream = av.audio.fifo.AudioFifo(
-            format=FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
-            layout=LAYOUT_MAPPING[CLIENT_CHANNELS],
-        )
+        """Force-recreate (empty) the play FIFO — drops buffered audio."""
+        self._play_stream = self._play_fifo()
 
     def open(self) -> None:
-        """Force-create fresh (empty) record and play FIFOs and reset the counter.
+        """Create fresh FIFOs and reset counter.
 
         Called at the start of each conversation so a stop/start on the same
         session discards any audio left buffered from the previous one.
         """
-        self._record_stream = av.audio.fifo.AudioFifo(
-            format=FORMAT_MAPPING[API_SAMPLE_WIDTH],
-            layout=LAYOUT_MAPPING[API_CHANNELS],
-        )
-        self._play_stream = av.audio.fifo.AudioFifo(
-            format=FORMAT_MAPPING[CLIENT_SAMPLE_WIDTH],
-            layout=LAYOUT_MAPPING[CLIENT_CHANNELS],
-        )
+        self._record_stream = self._record_fifo()
+        self._play_stream = self._play_fifo()
         self.played_samples = 0
