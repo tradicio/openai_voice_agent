@@ -1,10 +1,6 @@
 import asyncio
 import base64
-import json
 import logging
-import os
-import time
-from collections import deque
 
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import TypeAdapter, ValidationError
@@ -15,6 +11,18 @@ from api.models import (
     ControlMessage,
     IncomingMessage,
 )
+from api.ws.constants import (
+    API_TASK_TIMEOUT_S,
+    AUDIO_CHUNK_SIZE,
+    MAX_AUDIO_MESSAGES_PER_SECOND,
+    MAX_MESSAGE_BYTES,
+    MONITOR_POLL_INTERVAL_S,
+    MONITOR_TASK_TIMEOUT_S,
+    STREAM_IDLE_SLEEP_S,
+    STREAM_TASK_TIMEOUT_S,
+)
+from api.ws.limits import RateLimiter
+from api.ws.messenger import ClientMessenger
 from src.prompts import load_prompts
 from src.realtime import OpenAIRealtimeAPIWrapper
 from src.realtime.config import (
@@ -26,19 +34,6 @@ from src.realtime.config import (
 
 logger = logging.getLogger(__name__)
 
-# Audio streaming tuning knobs.
-AUDIO_CHUNK_SIZE = 4096
-MONITOR_POLL_INTERVAL_S = 0.3
-STREAM_IDLE_SLEEP_S = 0.01
-MONITOR_TASK_TIMEOUT_S = 2
-API_TASK_TIMEOUT_S = 5
-STREAM_TASK_TIMEOUT_S = 2
-
-# Reject oversized messages and cap the audio frame rate so a single
-# client can't exhaust memory/CPU.
-MAX_MESSAGE_BYTES = 128 * 1024
-MAX_AUDIO_MESSAGES_PER_SECOND = 50
-
 _incoming_message_adapter: TypeAdapter = TypeAdapter(IncomingMessage)
 
 
@@ -47,6 +42,8 @@ class AudioStreamSession:
 
     def __init__(self, websocket: WebSocket, api_key: str):
         self.websocket = websocket
+        self.messenger = ClientMessenger(websocket)
+        self.rate_limiter = RateLimiter(MAX_AUDIO_MESSAGES_PER_SECOND)
         self.api_wrapper = OpenAIRealtimeAPIWrapper(api_key=api_key)
         self.recording = False
         self.api_task = None
@@ -59,7 +56,6 @@ class AudioStreamSession:
         self.loop = asyncio.get_event_loop()
         # item_id -> chars already forwarded
         self.last_transcript_lengths: dict[str, int] = {}
-        self._audio_message_times: deque = deque()
 
     async def handle(self):
         """Main WebSocket message handler"""
@@ -72,14 +68,14 @@ class AudioStreamSession:
 
                 if len(data) > MAX_MESSAGE_BYTES:
                     logger.warning("Rejected oversized WebSocket message")
-                    await self._send_status("Message too large")
+                    await self.messenger.send_status("Message too large")
                     continue
 
                 try:
                     message = _incoming_message_adapter.validate_json(data)
                 except ValidationError as exc:
                     logger.warning(f"Rejected malformed message: {exc}")
-                    await self._send_status("Invalid message")
+                    await self.messenger.send_status("Invalid message")
                     continue
 
                 if isinstance(message, ControlMessage):
@@ -88,7 +84,7 @@ class AudioStreamSession:
                     elif message.action == "stop":
                         await self._stop_conversation()
                 elif isinstance(message, AudioMessage):
-                    if self._audio_rate_limited():
+                    if self.rate_limiter.is_limited():
                         continue
                     await self._handle_audio_frame(message)
                 elif isinstance(message, ConfigMessage):
@@ -100,58 +96,7 @@ class AudioStreamSession:
                 self.api_wrapper.stop()
         except Exception as e:
             logger.error(f"WebSocket error: {e}")
-            await self._send_status("An unexpected error occurred")
-
-    async def _send_conversation_ended(self) -> None:
-        """Tell the client the call ended server-side, ignoring send failures.
-
-        Emitted when the assistant's ``end_conversation`` tool (or the
-        session timeout) stops the conversation on the server, so the
-        client can reset its UI back to the idle "Start Conversation"
-        state without the user having pressed stop.
-        """
-        try:
-            await self.websocket.send_text(
-                json.dumps({"type": "conversation_ended"})
-            )
-        except Exception:
-            pass
-
-    async def _send_status(self, message: str) -> None:
-        """Send a status message to the client, ignoring send failures.
-
-        Parameters
-        ----------
-        message : str
-            The user-facing status text to deliver.
-        """
-        try:
-            await self.websocket.send_text(
-                json.dumps({"type": "status", "message": message})
-            )
-        except Exception:
-            pass
-
-    def _audio_rate_limited(self) -> bool:
-        """Check and record whether the incoming audio rate is exceeded.
-
-        Returns
-        -------
-        bool
-            True if the client has sent more than
-            ``MAX_AUDIO_MESSAGES_PER_SECOND`` audio frames within the
-            trailing one-second window and the current frame should be
-            dropped.
-        """
-        now = time.monotonic()
-        window = self._audio_message_times
-        while window and now - window[0] > 1:
-            window.popleft()
-        if len(window) >= MAX_AUDIO_MESSAGES_PER_SECOND:
-            logger.warning("Audio message rate limit exceeded, dropping frame")
-            return True
-        window.append(now)
-        return False
+            await self.messenger.send_status("An unexpected error occurred")
 
     async def _notify_and_halt(self, reason: str) -> None:
         """Stop the session and tell the client why.
@@ -166,7 +111,7 @@ class AudioStreamSession:
             User-facing explanation sent to the client as a status message.
         """
         self.recording = False
-        await self._send_status(reason)
+        await self.messenger.send_status(reason)
 
     async def _monitor_messages(self):
         """Monitor and forward transcript growth from API to client.
@@ -189,13 +134,8 @@ class AudioStreamSession:
                     prev_len = self.last_transcript_lengths.get(item_id, 0)
                     if len(text) > prev_len:
                         delta = text[prev_len:]
-                        await self.websocket.send_text(
-                            json.dumps({
-                                "type": "transcript",
-                                "role": item.get("role"),
-                                "seq": item.get("seq"),
-                                "delta": delta,
-                            })
+                        await self.messenger.send_transcript(
+                            item.get("role"), item.get("seq"), delta
                         )
                         self.last_transcript_lengths[item_id] = len(text)
                         logger.debug(
@@ -216,17 +156,13 @@ class AudioStreamSession:
                 if self.api_wrapper.consume_barge_in():
                     # User interrupted: tell the client to stop audio it has
                     # already scheduled instead of waiting it out.
-                    await self.websocket.send_text(
-                        json.dumps({"type": "clear_audio"})
-                    )
+                    await self.messenger.send_clear_audio()
                 pcm_audio = self.api_wrapper.read_client_pcm(
                     AUDIO_CHUNK_SIZE, partial=True
                 )
                 if pcm_audio:
                     base64_audio = base64.b64encode(pcm_audio).decode('utf-8')
-                    await self.websocket.send_text(
-                        json.dumps({"type": "audio", "data": base64_audio})
-                    )
+                    await self.messenger.send_audio(base64_audio)
                     logger.debug(
                         f"Sent {len(pcm_audio)} bytes of audio to client"
                     )
@@ -237,7 +173,7 @@ class AudioStreamSession:
                         and self.api_task.done()
                     ):
                         self.recording = False
-                        await self._send_conversation_ended()
+                        await self.messenger.send_conversation_ended()
                         break
                     await asyncio.sleep(STREAM_IDLE_SLEEP_S)
         except Exception as e:
@@ -281,9 +217,9 @@ class AudioStreamSession:
                     self.api_wrapper.set_instructions(
                         prompts[self.prompt_key]["instructions"]
                     )
-                    await self._send_status("Prompt updated")
+                    await self.messenger.send_status("Prompt updated")
                 else:
-                    await self._send_status(
+                    await self.messenger.send_status(
                         f"Prompt '{message.prompt_key}' not found"
                     )
 
@@ -291,9 +227,9 @@ class AudioStreamSession:
                 if message.model in MODEL_KEYS:
                     self.model = message.model
                     self.api_wrapper.set_model(self.model)
-                    await self._send_status("Model updated")
+                    await self.messenger.send_status("Model updated")
                 else:
-                    await self._send_status(
+                    await self.messenger.send_status(
                         f"Model '{message.model}' not found"
                     )
 
@@ -301,14 +237,14 @@ class AudioStreamSession:
                 if message.voice in VOICE_KEYS:
                     self.voice = message.voice
                     self.api_wrapper.set_voice(self.voice)
-                    await self._send_status("Voice updated")
+                    await self.messenger.send_status("Voice updated")
                 else:
-                    await self._send_status(
+                    await self.messenger.send_status(
                         f"Voice '{message.voice}' not found"
                     )
         except Exception as e:
             logger.error(f"Error handling config: {e}")
-            await self._send_status("Failed to apply configuration")
+            await self.messenger.send_status("Failed to apply configuration")
 
     async def _start_conversation(self):
         """Start recording and API connection"""
@@ -316,7 +252,7 @@ class AudioStreamSession:
             return
 
         self.recording = True
-        await self._send_status("Starting conversation...")
+        await self.messenger.send_status("Starting conversation...")
 
         try:
             self.api_wrapper.reset_streams()
@@ -332,8 +268,29 @@ class AudioStreamSession:
             )
         except Exception as e:
             logger.error(f"Conversation error: {e}")
-            await self._send_status("Failed to start conversation")
+            await self.messenger.send_status("Failed to start conversation")
             self.recording = False
+
+    async def _shutdown_task(self, task, timeout, name):
+        """Await a background task, cancelling it if it overruns ``timeout``.
+
+        Parameters
+        ----------
+        task : asyncio.Task | None
+            The task to wind down; ``None`` or already-done tasks are skipped.
+        timeout : float
+            Seconds to wait before cancelling.
+        name : str
+            Human-readable task name used in the timeout warning.
+        """
+        if task and not task.done():
+            try:
+                await asyncio.wait_for(task, timeout=timeout)
+            except TimeoutError:
+                logger.warning(
+                    f"{name} task did not complete within timeout"
+                )
+                task.cancel()
 
     async def _stop_conversation(self):
         """Stop recording and close API connection"""
@@ -343,91 +300,11 @@ class AudioStreamSession:
         self.api_wrapper.stop()
         self.recording = False
 
-        if self.monitor_task and not self.monitor_task.done():
-            try:
-                await asyncio.wait_for(
-                    self.monitor_task, timeout=MONITOR_TASK_TIMEOUT_S
-                )
-            except TimeoutError:
-                logger.warning("Monitor task did not complete within timeout")
-                self.monitor_task.cancel()
+        for task, timeout, name in (
+            (self.monitor_task, MONITOR_TASK_TIMEOUT_S, "Monitor"),
+            (self.api_task, API_TASK_TIMEOUT_S, "API"),
+            (self.stream_task, STREAM_TASK_TIMEOUT_S, "Stream"),
+        ):
+            await self._shutdown_task(task, timeout, name)
 
-        if self.api_task and not self.api_task.done():
-            try:
-                await asyncio.wait_for(
-                    self.api_task, timeout=API_TASK_TIMEOUT_S
-                )
-            except TimeoutError:
-                logger.warning("API task did not complete within timeout")
-                self.api_task.cancel()
-
-        if self.stream_task and not self.stream_task.done():
-            try:
-                await asyncio.wait_for(
-                    self.stream_task, timeout=STREAM_TASK_TIMEOUT_S
-                )
-            except TimeoutError:
-                logger.warning("Stream task did not complete within timeout")
-                self.stream_task.cancel()
-
-        await self._send_status("Conversation ended")
-
-
-async def audio_websocket_handler(websocket: WebSocket, api_key: str):
-    """Create and run a single audio streaming session.
-
-    Parameters
-    ----------
-    websocket : WebSocket
-        The accepted client connection.
-    api_key : str
-        OpenAI API key used to open the realtime session.
-    """
-    session = AudioStreamSession(websocket, api_key)
-    await session.handle()
-
-
-def _is_allowed_origin(origin: str | None) -> bool:
-    """Check whether a WebSocket handshake's Origin header is trusted.
-
-    Parameters
-    ----------
-    origin : str | None
-        The value of the incoming ``Origin`` header, if any.
-
-    Returns
-    -------
-    bool
-        True if the origin matches the configured frontend URL or the
-        local backend origin, False otherwise (including when absent).
-    """
-    if not origin:
-        return False
-    allowed_origins = {
-        os.getenv("FRONTEND_URL", "http://localhost:3000"),
-        "http://localhost:8000",
-    }
-    return origin in allowed_origins
-
-
-async def websocket_endpoint(websocket: WebSocket) -> None:
-    """WebSocket endpoint for audio streaming"""
-    if not _is_allowed_origin(websocket.headers.get("origin")):
-        logger.warning(
-            f"Rejected WebSocket handshake from disallowed origin: "
-            f"{websocket.headers.get('origin')!r}"
-        )
-        await websocket.close(code=1008, reason="Origin not allowed")
-        return
-
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        await websocket.accept()
-        await websocket.send_json({
-            "type": "status",
-            "message": "Error: OPENAI_API_KEY not set"
-        })
-        await websocket.close(code=1011, reason="API key not configured")
-        return
-
-    await audio_websocket_handler(websocket, api_key)
+        await self.messenger.send_status("Conversation ended")
