@@ -41,3 +41,21 @@ async def test_best_effort_send_swallows_failures():
 async def test_raising_send_propagates_failures():
     with pytest.raises(RuntimeError):
         await ClientMessenger(_BrokenWS()).send_audio("AAAA")
+
+
+async def test_send_audio_emits_expected_envelope():
+    ws = _FakeWS()
+    await ClientMessenger(ws).send_audio("AAAA")
+    assert json.loads(ws.sent[0]) == {"type": "audio", "data": "AAAA"}
+
+
+async def test_send_clear_audio_emits_expected_envelope():
+    ws = _FakeWS()
+    await ClientMessenger(ws).send_clear_audio()
+    assert json.loads(ws.sent[0]) == {"type": "clear_audio"}
+
+
+async def test_send_conversation_ended_emits_expected_envelope():
+    ws = _FakeWS()
+    await ClientMessenger(ws).send_conversation_ended()
+    assert json.loads(ws.sent[0]) == {"type": "conversation_ended"}

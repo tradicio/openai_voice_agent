@@ -26,7 +26,13 @@ class ClientMessenger:
             pass
 
     async def send_conversation_ended(self) -> None:
-        """Tell the client the call ended server-side, ignoring failures."""
+        """Tell the client the call ended server-side, ignoring send failures.
+
+        Emitted when the assistant's ``end_conversation`` tool (or the
+        session timeout) stops the conversation on the server, so the
+        client can reset its UI back to the idle "Start Conversation"
+        state without the user having pressed stop.
+        """
         try:
             await self._websocket.send_text(
                 json.dumps({"type": "conversation_ended"})
@@ -36,7 +42,9 @@ class ClientMessenger:
 
     # --- raising: let failures propagate ---
 
-    async def send_transcript(self, role, seq, delta: str) -> None:
+    async def send_transcript(
+        self, role: str | None, seq: int | None, delta: str
+    ) -> None:
         """Forward a transcript delta to the client."""
         await self._websocket.send_text(
             json.dumps({
