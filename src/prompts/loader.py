@@ -10,7 +10,9 @@ _DEFAULT_PROMPTS_PATH = os.path.join(os.path.dirname(__file__), 'prompts.yaml')
 
 
 @lru_cache(maxsize=1)
-def load_prompts(path: str = _DEFAULT_PROMPTS_PATH) -> dict[str, dict[str, str]]:
+def load_prompts(
+    path: str = _DEFAULT_PROMPTS_PATH,
+) -> dict[str, dict[str, str]]:
     """Load named assistant prompts from a YAML file.
 
     The result is cached per `path` for the lifetime of the process,
