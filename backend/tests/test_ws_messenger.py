@@ -1,7 +1,6 @@
 import json
 
 import pytest
-
 from api.ws.messenger import ClientMessenger
 
 
