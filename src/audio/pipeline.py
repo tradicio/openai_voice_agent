@@ -68,7 +68,9 @@ class AudioPipeline:
         return audio_frame_to_pcm_audio(resampled)
 
     def write_api_pcm(self, pcm_bytes: bytes) -> None:
-        """Enqueue API-format PCM frame for downlink, resampled to client."""
+        """Enqueue an API-format PCM frame for downlink, resampled to
+        client.
+        """
         frame = pcm_audio_to_audio_frame(
             pcm_bytes,
             format=FORMAT_MAPPING[API_SAMPLE_WIDTH],
@@ -82,7 +84,9 @@ class AudioPipeline:
     def read_client_pcm(
         self, nsamples: int, partial: bool = True
     ) -> bytes | None:
-        """Drain nsamples of playback, counting what is sent; None if empty."""
+        """Drain up to nsamples of playback, counting what is sent; None
+        if empty.
+        """
         frame = self._play_stream.read(nsamples, partial=partial)
         if not frame:
             return None
@@ -105,14 +109,18 @@ class AudioPipeline:
             self._play_stream = self._play_fifo()
 
     def reset_play(self) -> None:
-        """Force-recreate (empty) the play FIFO — drops buffered audio."""
+        """Force-recreate (empty) the play FIFO — drops buffered
+        assistant audio.
+        """
         self._play_stream = self._play_fifo()
 
     def open(self) -> None:
-        """Create fresh FIFOs and reset counter.
+        """Force-create fresh (empty) record and play FIFOs and reset
+        the counter.
 
-        Called at the start of each conversation so a stop/start on the same
-        session discards any audio left buffered from the previous one.
+        Called at the start of each conversation so a stop/start on the
+        same session discards any audio left buffered from the previous
+        one.
         """
         self._record_stream = self._record_fifo()
         self._play_stream = self._play_fifo()
