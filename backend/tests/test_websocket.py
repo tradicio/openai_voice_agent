@@ -2,7 +2,7 @@ import asyncio
 import json
 
 import pytest
-from api import websocket as ws_module
+from api.ws import session as session_module
 from fastapi.testclient import TestClient
 from main import app
 from starlette.websockets import WebSocketDisconnect
@@ -159,7 +159,9 @@ def test_audio_frame_ignored_when_not_recording():
 
 
 def test_start_and_stop_conversation(monkeypatch):
-    monkeypatch.setattr(ws_module, "OpenAIRealtimeAPIWrapper", FakeAPIWrapper)
+    monkeypatch.setattr(
+        session_module, "OpenAIRealtimeAPIWrapper", FakeAPIWrapper
+    )
     with client.websocket_connect("/ws/audio", headers=ORIGIN_HEADERS) as ws:
         ws.send_text(json.dumps({"type": "control", "action": "start"}))
         assert ws.receive_json() == {
@@ -174,7 +176,7 @@ def test_start_and_stop_conversation(monkeypatch):
 
 def test_barge_in_triggers_clear_audio(monkeypatch):
     monkeypatch.setattr(
-        ws_module, "OpenAIRealtimeAPIWrapper", FakeAPIWrapperWithBargeIn
+        session_module, "OpenAIRealtimeAPIWrapper", FakeAPIWrapperWithBargeIn
     )
     with client.websocket_connect("/ws/audio", headers=ORIGIN_HEADERS) as ws:
         ws.send_text(json.dumps({"type": "control", "action": "start"}))
@@ -206,7 +208,7 @@ class FakeAPIWrapperSelfEnding(FakeAPIWrapper):
 
 def test_server_ended_conversation_notifies_client(monkeypatch):
     monkeypatch.setattr(
-        ws_module, "OpenAIRealtimeAPIWrapper", FakeAPIWrapperSelfEnding
+        session_module, "OpenAIRealtimeAPIWrapper", FakeAPIWrapperSelfEnding
     )
     with client.websocket_connect("/ws/audio", headers=ORIGIN_HEADERS) as ws:
         ws.send_text(json.dumps({"type": "control", "action": "start"}))
@@ -239,7 +241,7 @@ class FakeAPIWrapperWithItems(FakeAPIWrapper):
 
 def test_monitor_forwards_seq_keyed_transcripts(monkeypatch):
     monkeypatch.setattr(
-        ws_module, "OpenAIRealtimeAPIWrapper", FakeAPIWrapperWithItems
+        session_module, "OpenAIRealtimeAPIWrapper", FakeAPIWrapperWithItems
     )
     with client.websocket_connect("/ws/audio", headers=ORIGIN_HEADERS) as ws:
         ws.send_text(json.dumps({"type": "control", "action": "start"}))

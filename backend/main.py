@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from api.routes import router  # noqa: E402
-from api.websocket import websocket_endpoint  # noqa: E402
+from api.ws.endpoint import websocket_endpoint  # noqa: E402
 
 load_dotenv(".env", override=True)
 
